@@ -121,6 +121,16 @@ class Stopped(Exception):
     pass
 
 
+class Interrupted(Exception):
+    """A waiting period was cut short (e.g. by a manual addition)."""
+
+
+# Method fields that may be changed while a titration is running
+LIVE_FIELDS = ("control", "eq_time_min", "meas_interval_min", "drift_points", "max_drift_mv", "max_readings",
+               "volume_step_ml", "adaptive", "halve_if_de_gt", "double_if_de_lt", "min_step_ml", "max_step_ml",
+               "stop_volume_ml", "stop_emf_min", "stop_emf_max", "fill_at_end")
+
+
 def next_step(step, de, m):
     """Adaptive step size: halve if the EMF changed a lot, double if little."""
     if not m.adaptive or de is None:
@@ -144,6 +154,7 @@ class Controller:
         self.jobs = queue.Queue()
         self.stop_event = threading.Event()     # stop current job
         self.pause_event = threading.Event()
+        self.interrupt_event = threading.Event()  # cut the current wait short (manual addition)
         self.busy = False
         self.job_name = ""
         self.requests = queue.Queue()   # burette changes etc. for the running titration
@@ -162,6 +173,7 @@ class Controller:
         self.job_name = name
         self.stop_event.clear()
         self.pause_event.clear()
+        self.interrupt_event.clear()
         self.jobs.put((name, fn, args))
         return True
 
@@ -205,11 +217,15 @@ class Controller:
         last_tick = -math.inf
         while True:
             self.check_stop()
+            if self.interrupt_event.is_set():
+                raise Interrupted()
             if self.pause_event.is_set():
                 t_pause = self.clock.now()
                 self.emit("countdown", None, "paused")
                 while self.pause_event.is_set():
                     self.check_stop()
+                    if self.interrupt_event.is_set():
+                        raise Interrupted()
                     time.sleep(0.1)
                 end += self.clock.now() - t_pause
             remaining = end - self.clock.now()
@@ -278,6 +294,15 @@ class Controller:
 
     def request_burette_change(self, burettes, active, new_method_fields=None):
         self.requests.put(("burette", copy.deepcopy(burettes), list(active), dict(new_method_fields or {})))
+
+    def request_method_change(self, fields):
+        """Change settings of the running titration (applied before the next addition)."""
+        self.requests.put(("method", dict(fields)))
+
+    def request_addition(self, burette, volume):
+        """Manual addition during a titration: done at once, recorded, equilibration restarts."""
+        self.requests.put(("add", copy.deepcopy(burette), float(volume)))
+        self.interrupt_event.set()
 
 
 class TitrationJob:
@@ -412,7 +437,31 @@ class TitrationJob:
                 req = self.ctl.requests.get_nowait()
             except queue.Empty:
                 return
-            if req[0] == "burette":
+            if req[0] == "method":
+                fields = {k: v for k, v in req[1].items() if k in LIVE_FIELDS}
+                for k, v in fields.items():
+                    setattr(self.m, k, v)
+                if "volume_step_ml" in fields:
+                    self.step = fields["volume_step_ml"]
+                    self.emit("step", self.step)
+                self.record(None, "event", note="settings changed: " + json.dumps(fields, ensure_ascii=False))
+                self.emit("status", "Settings applied: " + ", ".join(f"{k}={v}" for k, v in fields.items()))
+            elif req[0] == "add":
+                _, b, volume = req
+                ins = self.ctl.instruments[b.device]
+                ins.burette_select = b.select or None
+                self.emit("status", f"Manual addition: {volume:.4f} mL from {b.name}…")
+                done = ins.dispense(volume, b.rate, stop_event=self.ctl.stop_event)
+                self.ctl.check_stop()
+                self.v_total += done
+                self.v_segment += done
+                idx = next((i for i, x in enumerate(self.burettes) if x.name == b.name), None)
+                if idx is not None:
+                    self.v_per_burette[idx] += done
+                self.record(None, "event", note=f"manual addition: {done:.4f} mL from {b.name}")
+                self.emit("volume", self.v_total, self.v_segment)
+                self.emit("status", f"Added {done:.4f} mL from {b.name}; equilibrating again.")
+            elif req[0] == "burette":
                 _, burettes, active, fields = req
                 self.burettes, self.active = burettes, active
                 if len(self.v_per_burette) < len(burettes):
@@ -444,8 +493,13 @@ class TitrationJob:
             prev = None
             while True:
                 self.handle_requests()
+                self.ctl.interrupt_event.clear()
                 self.emit("status", f"Measuring at {self.v_segment:.4f} mL (segment {self.segment})…")
-                r = self.measure_point()
+                try:
+                    r = self.measure_point()
+                except Interrupted:
+                    self.ctl.interrupt_event.clear()
+                    continue   # handle the request (e.g. manual addition), then measure again
                 de = None if prev is None or prev.segment != r.segment else r.emf - prev.emf
                 prev = r
                 why = self.check_limits(r.emf)

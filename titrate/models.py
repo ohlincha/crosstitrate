@@ -29,8 +29,7 @@ class Profile:
 PROFILES = {p.model: p for p in [
     Profile("702", "SM Titrino"),
     Profile("716", "DMS Titrino"),
-    Profile("718", "STAT Titrino", notes="Reference model: command set taken from its manual and "
-                                         "from the WinTitrate program used with it."),
+    Profile("718", "STAT Titrino", notes="Reference model: command set taken from its manual."),
     Profile("719", "S Titrino"),
     Profile("720", "KFS Titrino", potentiometric=False, quantities=("Ipol", "Upol"),
             notes="Karl Fischer titrator: no mV/pH measurement; usable as a burette."),

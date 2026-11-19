@@ -203,7 +203,7 @@ def friendly_serial_error(port, e):
             return (f"Permission denied for {port}. Add yourself to the 'dialout' group:\n"
                     "    sudo usermod -aG dialout $USER\nthen log out and in again.")
         if "access is denied" in low:
-            return f"{port} is in use by another program (close it, e.g. the old WinTitrate) or access is denied."
+            return f"{port} is in use by another program (close the other program) or access is denied."
         return f"Permission denied for {port}: {msg}"
     if "busy" in low or "resource temporarily" in low or "errno 16" in low:
         return f"{port} is in use by another program."

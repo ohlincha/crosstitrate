@@ -4,8 +4,8 @@ Cross-platform titration software for **Metrohm Titrino** instruments controlled
 RS232. Titrate runs potentiometric (EMF) titrations, plots them live, and saves the data.
 It also includes connection diagnostics and a built-in simulator.
 
-It replaces the old *WinTitrate* (Visual Basic 6, Windows-only) program used with a
-718 STAT Titrino. It can still write WinTitrate's data format for existing analysis programs.
+It was written to replace an old Windows-only Visual Basic program used with a 718 STAT
+Titrino.
 
 - **Windows, macOS and Linux.** Installers bundle everything.
 - **Titrations:**
@@ -77,20 +77,30 @@ Network serial servers (e.g. Moxa NPort) also work: enter `socket://host:port` a
 ## Running a titration
 
 1. **Burettes tab:** define each burette: the instrument that drives it, the dispensing
-   rate, and the concentrations of components H, B, C and D in mM (negative H for base, as
-   in WinTitrate). Tick the burette(s) to use.
+   rate, and the concentrations of components H, B, C and D in mM (negative H
+   for a base). Tick the burette(s) to use.
 2. **Sample tab:** start volume V₀, temperature, start concentrations, comment.
-3. **Method tab:**
-   - Choose point acceptance:
-     - *constant*: wait the equilibration time, then read.
-     - *drift*: read every interval until |EMF − EMF N readings earlier| is below the limit,
-       or the maximum number of readings is reached.
-   - Volume step, optional adaptive step, and stop conditions.
+3. **Titration tab** (the front tab): point acceptance, equilibration time, volume step,
+   "Adjust step by ΔEMF" and the stop conditions (volume, EMF limits). The **Method tab**
+   has the same settings, plus the drift-control parameters and the step limits.
+   - *constant*: wait the equilibration time, then read.
+   - *drift*: read every interval until |EMF − EMF N readings earlier| is below the limit,
+     or the maximum number of readings is reached.
    - Methods can be saved and loaded as JSON.
-4. Choose the data file and press **Start titration**. The plot shows accepted points in
-   blue and intermediate drift readings in grey.
-5. **Change burette…** switches burettes, or updates concentrations, at the next addition.
-   The data file records the change, and the segment volume restarts at 0, as in WinTitrate.
+4. Choose the data file and press **▶ Start**. The plot shows accepted points in blue and
+   intermediate drift readings in grey.
+5. **During the titration:**
+   - **Change the step size or stop conditions:** edit them, then press **Apply to running
+     titration**. The change takes effect at the next addition and is logged in the data
+     file.
+   - **Pause / Resume** freezes the waiting time. An addition that has already started
+     finishes first.
+   - **Manual additions** (*Add … mL from …*) are done at once and recorded in the data file.
+     The equilibration then restarts at the new volume.
+   - **Change burette…** switches burettes, or updates concentrations, at the next addition.
+     The data file records the change, and the segment volume restarts at 0.
+6. Outside a titration, **Measure EMF** and manual additions appear in the table and plot.
+   Use **Save table…** to keep them.
 
 ## Data files
 
@@ -101,19 +111,9 @@ instruments and start/end times as JSON. It's followed by one row per reading:
 timestamp,elapsed_s,segment,kind,burettes,v_total_ml,v_segment_ml,emf_mv,temperature_c,drift_mv,note
 ```
 
-`kind` is `eq` (accepted point), `drift` (intermediate reading) or `event` (a burette
-change). `v_total_ml` is cumulative over the whole titration; `v_segment_ml` restarts at
+`kind` is `eq` (accepted point), `drift` (intermediate reading) or `event` (burette change,
+manual addition, or settings change; details in `note`). `v_total_ml` is cumulative over the whole titration; `v_segment_ml` restarts at
 each burette change.
-
-**WinTitrate format** (`.txt`, optional). Written automatically at the end of a
-titration, or later with *Export WinTitrate…* from any CSV:
-
-```
-"Datum",#2026-11-19#
-"Start:konc.",50,10,0,0,0,0,0
-"Byrkonc",-100,0,0,0,0,0,0
-"10 23 45",.5,25,278.6,0,0
-```
 
 ## Supported instruments
 
@@ -122,7 +122,7 @@ model from its program version and adapts to it.
 
 | Model | Notes |
 |---|---|
-| 718 STAT Titrino | Reference model (manual + the WinTitrate program) |
+| 718 STAT Titrino | Reference model (command set taken from its manual) |
 | 702, 716, 719, 736, 794 | Standard Titrinos |
 | 751 GPD, 785 DMP, 798 MPT, 799 GPT | Also burettes D0/D1/D2 on one instrument |
 | 720, 758, 784, 795 (KF) | No mV measurement; usable as burettes |

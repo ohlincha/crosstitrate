@@ -12,9 +12,9 @@ from tkinter import filedialog, messagebox, ttk
 from .. import __version__, datafile, settings, transport
 from ..instrument import InstrumentError, NoResponse, Titrino
 from ..simulator import Chemistry, Clock, SimulatedTitrino
-from ..titration import COMPONENTS, Burette, Controller, Method, Sample
+from ..titration import COMPONENTS, LIVE_FIELDS, Burette, Controller, Method, Sample
 from . import dialogs
-from .widgets import Form, FormError, Plot
+from .widgets import Form, FormError, Plot, autosize_columns
 
 STATUS_COLORS = {"connected": "#1a7f37", "no answer": "#cf222e", "error": "#cf222e", "connecting…": "#9a6700"}
 
@@ -39,6 +39,7 @@ class App(ttk.Frame):
                                 if k in {f.name for f in dataclasses.fields(Sample)}})
         self.readings = []
         self.markers = []
+        self.manual_volume = 0.0       # volume added manually outside a titration (for the table/plot)
         self.titrating = False
         self.log_queue = queue.Queue()
         self.ui_queue = queue.Queue()   # callables from worker threads, run on the Tk thread
@@ -60,58 +61,86 @@ class App(ttk.Frame):
         style.configure("Mid.TLabel", font=("TkDefaultFont", 12))
         pw = ttk.PanedWindow(self, orient="horizontal")
         pw.pack(fill="both", expand=True, padx=6, pady=6)
-        left = ttk.Notebook(pw, width=430)
+        left = ttk.Notebook(pw, width=500)
         right = ttk.Frame(pw)
         pw.add(left, weight=0)
         pw.add(right, weight=1)
-        self._build_instruments(left)
+        front = ttk.Frame(left, padding=8)
+        left.add(front, text="Titration")
         self._build_burettes(left)
         self._build_sample(left)
         self._build_method(left)
         self._build_run(right)
+        self._build_front(front)
         self.status_var = tk.StringVar(value="Ready.")
         ttk.Label(self, textvariable=self.status_var, anchor="w", padding=(8, 2)).pack(fill="x", side="bottom")
 
-    def _build_instruments(self, nb):
-        tab = ttk.Frame(nb, padding=8)
-        nb.add(tab, text="Instruments")
-        self.inst_tree = ttk.Treeview(tab, columns=("port", "model", "status"), height=6, selectmode="browse")
-        self.inst_tree.heading("#0", text="Name")
+    def _build_front(self, tab):
+        self.inst_tree = ttk.Treeview(tab, columns=("port", "model", "status"), height=3, selectmode="browse")
+        self.inst_tree.heading("#0", text="Instrument")
         self.inst_tree.heading("port", text="Port")
         self.inst_tree.heading("model", text="Model")
         self.inst_tree.heading("status", text="Status")
-        for c, w in (("#0", 90), ("port", 90), ("model", 120), ("status", 100)):
-            self.inst_tree.column(c, width=w, stretch=c == "model")
         self.inst_tree.pack(fill="x")
         for st, col in STATUS_COLORS.items():
             self.inst_tree.tag_configure(st, foreground=col)
         bar = ttk.Frame(tab)
         bar.pack(fill="x", pady=4)
-        ttk.Button(bar, text="Connect…", command=self.add_instrument).pack(side="left")
-        ttk.Button(bar, text="Reconnect", command=self.reconnect_selected).pack(side="left", padx=4)
-        ttk.Button(bar, text="Remove", command=self.remove_instrument).pack(side="left")
-        ttk.Button(bar, text="Diagnostics…", command=self.diagnose_selected).pack(side="left", padx=4)
-        bar2 = ttk.Frame(tab)
-        bar2.pack(fill="x")
-        ttk.Button(bar2, text="Instrument info", command=self.instrument_info).pack(side="left")
-        ttk.Button(bar2, text="Setup guide", command=lambda: dialogs.TextDialog(
-            self.root, "Setup guide", dialogs.setup_guide_text()).show()).pack(side="left", padx=4)
-
+        buttons = [("Connect…", self.add_instrument), ("Reconnect", self.reconnect_selected),
+                   ("Remove", self.remove_instrument), ("Diagnostics…", self.diagnose_selected),
+                   ("Instrument info", self.instrument_info),
+                   ("Setup guide", lambda: dialogs.TextDialog(self.root, "Setup guide",
+                                                              dialogs.setup_guide_text()).show())]
+        for c in range(3):
+            bar.columnconfigure(c, weight=1, uniform="ib")
+        for i, (text, cmd) in enumerate(buttons):
+            ttk.Button(bar, text=text, command=cmd).grid(row=i // 3, column=i % 3, sticky="ew", padx=2, pady=2)
         mf = ttk.Frame(tab)
-        mf.pack(fill="x", pady=(10, 0))
+        mf.pack(fill="x", pady=(4, 0))
         ttk.Label(mf, text="Measuring instrument:").pack(side="left")
         self.meas_var = tk.StringVar(value=self.cfg.get("meas_key", ""))
         self.meas_box = ttk.Combobox(mf, textvariable=self.meas_var, state="readonly", width=18)
         self.meas_box.pack(side="left", padx=4)
 
+        # Main titration settings - the same values as on the Method tab
+        qs = ttk.LabelFrame(tab, text="Titration settings", padding=6)
+        qs.pack(fill="x", pady=(10, 0))
+        q = Form(qs, label_width=24)
+        q.frame.pack(fill="x")
+        self.qform = q
+        mv = self.mform.vars
+        q.add("control", "Point acceptance", str, choices=["constant", "drift"], width=10, var=mv["control"],
+              tip="constant: fixed equilibration time.\ndrift: until the EMF is stable (settings on the Method tab).")
+        q.add("eq_time_min", "Equilibration time", float, "min", var=mv["eq_time_min"])
+        q.add("volume_step_ml", "Volume step", float, "mL", var=mv["volume_step_ml"],
+              tip="Can be changed during a titration: edit, then press 'Apply to running titration'.")
+        q.add("adaptive", "Adjust step by ΔEMF", bool, var=mv["adaptive"],
+              tip="Halve/double the step depending on the EMF change (limits on the Method tab).")
+        q.section("Stop when")
+        q.add("stop_volume_ml", "Volume reaches", float, "mL", var=mv["stop_volume_ml"])
+        q.add("stop_emf_min", "EMF below (optional)", float, "mV", optional=True, var=mv["stop_emf_min"])
+        q.add("stop_emf_max", "EMF above (optional)", float, "mV", optional=True, var=mv["stop_emf_max"])
+        qb = ttk.Frame(qs)
+        qb.pack(fill="x", pady=(6, 0))
+        self.btn_apply = ttk.Button(qb, text="Apply to running titration", command=self.apply_live)
+        self.btn_apply.pack(side="left")
+        self.btn_pause2 = ttk.Button(qb, text="Pause", command=self.pause)
+        self.btn_pause2.pack(side="left", padx=6)
+        ttk.Label(qs, text="More settings (drift control, step limits) on the Method tab.",
+                  foreground="#777").pack(anchor="w", pady=(4, 0))
+        self.forms = [self.mform, self.qform]
+        self._method_toggle()
+
         man = ttk.LabelFrame(tab, text="Manual control", padding=6)
-        man.pack(fill="x", pady=(12, 0))
+        man.pack(fill="x", pady=(10, 0))
         r1 = ttk.Frame(man)
         r1.pack(fill="x")
         self.btn_measure = ttk.Button(r1, text="Measure EMF", command=self.measure_once)
         self.btn_measure.pack(side="left")
         self.btn_monitor = ttk.Button(r1, text="Monitor EMF", command=self.monitor)
         self.btn_monitor.pack(side="left", padx=4)
+        self.btn_stop_manual = ttk.Button(r1, text="Stop", command=self.ctl.stop)
+        self.btn_stop_manual.pack(side="left")
         r2 = ttk.Frame(man)
         r2.pack(fill="x", pady=(6, 0))
         ttk.Label(r2, text="Add").pack(side="left")
@@ -125,10 +154,10 @@ class App(ttk.Frame):
         self.btn_add.pack(side="left", padx=2)
         self.btn_fill = ttk.Button(r2, text="Fill", command=self.manual_fill)
         self.btn_fill.pack(side="left")
-        self.btn_stop_manual = ttk.Button(man, text="Stop", command=self.ctl.stop)
-        self.btn_stop_manual.pack(anchor="w", pady=(6, 0))
-        ttk.Label(tab, text="Manual additions are not recorded in a titration file.",
-                  foreground="#777").pack(anchor="w", pady=(4, 0))
+        ttk.Label(man, text="During a titration, additions are recorded in the data file and the "
+                            "equilibration restarts.", foreground="#777", wraplength=430,
+                  justify="left").pack(anchor="w", pady=(4, 0))
+        self.refresh_instruments()
 
     def _build_burettes(self, nb):
         tab = ttk.Frame(nb, padding=8)
@@ -137,20 +166,23 @@ class App(ttk.Frame):
         self.bur_tree = ttk.Treeview(tab, columns=cols, height=6, selectmode="browse")
         self.bur_tree.heading("#0", text="Name")
         self.bur_tree.column("#0", width=90)
-        heads = {"active": "Use", "device": "Instrument", "rate": "mL/min", "ratio": "Ratio"}
+        heads = {"active": "Use", "device": "Instrument", "rate": "Rate", "ratio": "Ratio"}
         for c in cols:
             self.bur_tree.heading(c, text=heads.get(c, c[1:]))
-            self.bur_tree.column(c, width=40 if c not in ("device",) else 80, anchor="center")
+            self.bur_tree.column(c, anchor="center")
+        xs = ttk.Scrollbar(tab, orient="horizontal", command=self.bur_tree.xview)
+        self.bur_tree.config(xscrollcommand=xs.set)
         self.bur_tree.pack(fill="x")
+        xs.pack(fill="x")
         self.bur_tree.bind("<Double-1>", lambda e: self.edit_burette())
         bar = ttk.Frame(tab)
         bar.pack(fill="x", pady=4)
-        ttk.Button(bar, text="Add…", command=self.add_burette).pack(side="left")
-        ttk.Button(bar, text="Edit…", command=self.edit_burette).pack(side="left", padx=4)
-        ttk.Button(bar, text="Remove", command=self.remove_burette).pack(side="left")
-        ttk.Button(bar, text="Use / don't use", command=self.toggle_active).pack(side="left", padx=4)
+        for i, (text, cmd) in enumerate((("Add…", self.add_burette), ("Edit…", self.edit_burette),
+                                         ("Remove", self.remove_burette), ("Use / don't use", self.toggle_active))):
+            bar.columnconfigure(i, weight=1, uniform="bb")
+            ttk.Button(bar, text=text, command=cmd).grid(row=0, column=i, sticky="ew", padx=2)
         ttk.Label(tab, wraplength=400, foreground="#555", justify="left", text=(
-            "Concentrations are in mM (negative H for base, as in WinTitrate). Burettes marked 'Use' "
+            "Rate in mL/min; concentrations H, B, C, D in mM (negative H for a base). Burettes marked 'Use' "
             "dispense at every step; with several, each adds step × ratio. During a titration, use "
             "'Change burette…' to switch.")).pack(anchor="w", pady=(8, 0))
 
@@ -205,6 +237,8 @@ class App(ttk.Frame):
         bar.pack(fill="x", pady=8)
         ttk.Button(bar, text="Load method…", command=self.load_method).pack(side="left")
         ttk.Button(bar, text="Save method…", command=self.save_method).pack(side="left", padx=4)
+        self.btn_apply_m = ttk.Button(bar, text="Apply to running titration", command=self.apply_live)
+        self.btn_apply_m.pack(side="left", padx=4)
 
     def save_method(self):
         try:
@@ -248,14 +282,15 @@ class App(ttk.Frame):
         self.status(f"Loaded method {p}")
 
     def _method_toggle(self):
-        f = self.mform
-        drift = f.vars["control"].get() == "drift"
-        f.enable("eq_time_min", not drift)
-        for k in ("meas_interval_min", "drift_points", "max_drift_mv", "max_readings"):
-            f.enable(k, drift)
-        ad = f.vars["adaptive"].get()
-        for k in ("halve_if_de_gt", "double_if_de_lt", "min_step_ml", "max_step_ml"):
-            f.enable(k, ad)
+        drift = self.mform.vars["control"].get() == "drift"
+        ad = self.mform.vars["adaptive"].get()
+        state = {"eq_time_min": not drift}
+        state.update({k: drift for k in ("meas_interval_min", "drift_points", "max_drift_mv", "max_readings")})
+        state.update({k: ad for k in ("halve_if_de_gt", "double_if_de_lt", "min_step_ml", "max_step_ml")})
+        for f in getattr(self, "forms", [self.mform]):
+            for k, on in state.items():
+                if k in f.vars:
+                    f.enable(k, on)
 
     def _build_run(self, parent):
         top = ttk.Frame(parent)
@@ -276,30 +311,26 @@ class App(ttk.Frame):
             ttk.Label(info, textvariable=v, width=22, style="Mid.TLabel").grid(row=i, column=1, sticky="w")
             self.info_vars[k] = v
 
-        fbar = ttk.Frame(parent)
-        fbar.pack(fill="x", pady=(8, 2))
-        ttk.Label(fbar, text="Data file:").pack(side="left")
+        # Data file + run controls on one grid so the buttons line up in equal-width columns
+        g = ttk.Frame(parent)
+        g.pack(fill="x", pady=(8, 4))
+        for c in range(6):
+            g.columnconfigure(c, weight=1, uniform="btn")
+        ttk.Label(g, text="Data file:").grid(row=0, column=0, sticky="w")
         self.file_var = tk.StringVar(value=self.default_file())
-        self.file_entry = ttk.Entry(fbar, textvariable=self.file_var)
-        self.file_entry.pack(side="left", fill="x", expand=True, padx=4)
-        ttk.Button(fbar, text="Browse…", command=self.browse_file).pack(side="left")
-        self.legacy_var = tk.BooleanVar(value=self.cfg.get("legacy_export", True))
-        ttk.Checkbutton(fbar, text="also WinTitrate .txt", variable=self.legacy_var).pack(side="left", padx=6)
-
-        bar = ttk.Frame(parent)
-        bar.pack(fill="x", pady=4)
-        self.btn_start = ttk.Button(bar, text="▶ Start titration", command=self.start)
-        self.btn_start.pack(side="left")
-        self.btn_delayed = ttk.Button(bar, text="Delayed start…", command=self.delayed_start)
-        self.btn_delayed.pack(side="left", padx=4)
-        self.btn_pause = ttk.Button(bar, text="Pause", command=self.pause)
-        self.btn_pause.pack(side="left")
-        self.btn_stop = ttk.Button(bar, text="■ Stop", command=self.stop)
-        self.btn_stop.pack(side="left", padx=4)
-        self.btn_change = ttk.Button(bar, text="Change burette…", command=self.change_burette)
-        self.btn_change.pack(side="left")
-        ttk.Button(bar, text="Open data…", command=self.open_data).pack(side="right")
-        ttk.Button(bar, text="Export WinTitrate…", command=self.export_legacy).pack(side="right", padx=4)
+        self.file_entry = ttk.Entry(g, textvariable=self.file_var)
+        self.file_entry.grid(row=0, column=1, columnspan=3, sticky="ew", padx=(0, 4))
+        ttk.Button(g, text="Browse…", command=self.browse_file).grid(row=0, column=4, sticky="ew", padx=2)
+        ttk.Button(g, text="Open data…", command=self.open_data).grid(row=0, column=5, sticky="ew", padx=2)
+        self.btn_start = ttk.Button(g, text="▶ Start", command=self.start)
+        self.btn_delayed = ttk.Button(g, text="Delayed start…", command=self.delayed_start)
+        self.btn_pause = ttk.Button(g, text="Pause", command=self.pause)
+        self.btn_stop = ttk.Button(g, text="■ Stop", command=self.stop)
+        self.btn_change = ttk.Button(g, text="Change burette…", command=self.change_burette)
+        self.btn_save_table = ttk.Button(g, text="Save table…", command=self.save_table)
+        for i, btn in enumerate((self.btn_start, self.btn_delayed, self.btn_pause, self.btn_stop,
+                                 self.btn_change, self.btn_save_table)):
+            btn.grid(row=1, column=i, sticky="ew", padx=2, pady=(6, 0))
 
         pv = ttk.PanedWindow(parent, orient="vertical")
         pv.pack(fill="both", expand=True)
@@ -373,7 +404,7 @@ class App(ttk.Frame):
         self.cfg.update(instruments=self.inst_cfg, burettes=[b.to_dict() for b in self.burettes],
                         active=self.active, method=self.method.to_dict(),
                         sample=dataclasses.asdict(self.sample), meas_key=self.meas_var.get(),
-                        components=self.components, legacy_export=self.legacy_var.get(),
+                        components=self.components,
                         data_dir=os.path.dirname(self.file_var.get()))
         try:
             settings.save(self.cfg)
@@ -382,6 +413,8 @@ class App(ttk.Frame):
 
     # =============================================================== instruments
     def refresh_instruments(self):
+        if not hasattr(self, "inst_tree"):
+            return
         self.inst_tree.delete(*self.inst_tree.get_children())
         for name, c in self.inst_cfg.items():
             ins = self.ctl.instruments.get(name)
@@ -389,6 +422,7 @@ class App(ttk.Frame):
             model = ins.profile.title if ins else ""
             port = "simulator" if c["port"] == dialogs.SIMULATOR else c["port"]
             self.inst_tree.insert("", "end", iid=name, text=name, values=(port, model, st), tags=(st,))
+        autosize_columns(self.inst_tree)
         names = list(self.inst_cfg)
         self.meas_box["values"] = names
         if self.meas_var.get() not in names:
@@ -546,6 +580,7 @@ class App(ttk.Frame):
             self.bur_tree.insert("", "end", iid=str(i), text=b.name, values=(
                 "✔" if i in self.active else "", b.device, f"{b.rate:g}",
                 *[f"{b.concentrations.get(c, 0):g}" for c in COMPONENTS], f"{b.ratio:g}"))
+        autosize_columns(self.bur_tree)
         names = [b.name for b in self.burettes]
         self.man_bur_box["values"] = names
         if self.man_bur.get() not in names and names:
@@ -637,6 +672,10 @@ class App(ttk.Frame):
         except ValueError:
             messagebox.showerror("Add volume", "Enter a volume between 0 and 100 mL.")
             return
+        if self.titrating:
+            self.ctl.request_addition(b, v)
+            self.status(f"Adding {v} mL from {b.name} now; it will be recorded and the equilibration restarts.")
+            return
         self.status(f"Adding {v} mL from {b.name}…")
         self.ctl.dispense(b.device, b.select, v, b.rate)
 
@@ -718,12 +757,38 @@ class App(ttk.Frame):
         self.markers.clear()
         self.plot.clear()
         self.data_tree.delete(*self.data_tree.get_children())
+        self.manual_volume = 0.0
         self.info_vars["step"].set(f"{method.volume_step_ml:g} mL")
-        extra = {"note": "Created with titrate; see the README for the file format."}
+        extra = {"note": "Created with Titrate; see the README for the file format."}
         if self.ctl.run_titration(sample, method, self.burettes, self.active, path, meas, extra, start_at):
             self.titrating = True
             self.current_path = path
             self._update_buttons()
+
+    def apply_live(self):
+        """Send edited settings (step size, stop conditions, ...) to the running titration."""
+        job = getattr(self.ctl, "current", None)
+        if not self.titrating or job is None:
+            self.status("Not titrating - the settings will be used when you start.")
+            return
+        try:
+            m = Method.from_dict({k: self.mform.get(k) for k in self.mform.vars})
+        except FormError as e:
+            messagebox.showerror("Apply", str(e))
+            return
+        errs = m.validate()
+        if errs:
+            messagebox.showerror("Apply", "; ".join(errs))
+            return
+        changed = {k: getattr(m, k) for k in LIVE_FIELDS if getattr(m, k) != getattr(job.m, k)}
+        if abs(m.volume_step_ml - job.step) > 1e-12:
+            changed["volume_step_ml"] = m.volume_step_ml
+        if not changed:
+            self.status("No changes to apply.")
+            return
+        self.ctl.request_method_change(changed)
+        self.message("Applying to the running titration: " + ", ".join(f"{k} = {v}" for k, v in changed.items()))
+        self.status("Changes will be applied before the next addition.")
 
     def delayed_start(self):
         t = dialogs.DelayedStartDialog(self.root).show()
@@ -733,18 +798,21 @@ class App(ttk.Frame):
     def pause(self):
         if self.ctl.pause_event.is_set():
             self.ctl.pause_event.clear()
-            self.btn_pause.config(text="Pause")
+            text = "Pause"
             self.status("Resumed.")
         else:
             self.ctl.pause_event.set()
-            self.btn_pause.config(text="Resume")
-            self.status("Paused (the waiting time is frozen).")
+            text = "Resume"
+            self.status("Paused: the waiting time is frozen (an addition in progress finishes first).")
+        for b in (self.btn_pause, self.btn_pause2):
+            b.config(text=text)
 
     def stop(self):
         if self.titrating and not messagebox.askyesno("Stop", "Stop the titration now?"):
             return
         self.ctl.stop()
-        self.btn_pause.config(text="Pause")
+        for b in (self.btn_pause, self.btn_pause2):
+            b.config(text="Pause")
 
     def change_burette(self):
         if not self.titrating:
@@ -804,26 +872,24 @@ class App(ttk.Frame):
         self.redraw_plot()
         self.status(f"Loaded {p} ({len(rows)} rows).")
 
-    def export_legacy(self, path=None):
-        src = path or filedialog.askopenfilename(title="CSV data file to export",
-                                                 initialdir=os.path.dirname(self.file_var.get()),
-                                                 filetypes=[("CSV files", "*.csv")])
-        if not src:
-            return None
-        dst = os.path.splitext(src)[0] + ".txt"
-        if not path:
-            dst = filedialog.asksaveasfilename(title="Save WinTitrate file", defaultextension=".txt",
-                                               initialdir=os.path.dirname(src), initialfile=os.path.basename(dst))
-            if not dst:
-                return None
-        try:
-            meta, rows = datafile.read(src)
-            datafile.export_legacy(dst, meta, rows)
-        except Exception as e:  # noqa: BLE001
-            messagebox.showerror("Export", f"Export failed: {e}")
-            return None
-        self.message(f"Saved WinTitrate-format file {dst}")
-        return dst
+    def save_table(self):
+        """Save the rows currently in the data table (e.g. manual measurements) as CSV."""
+        rows = [self.data_tree.item(i, "values") for i in self.data_tree.get_children()]
+        if not rows:
+            messagebox.showinfo("Save table", "The table is empty.")
+            return
+        p = filedialog.asksaveasfilename(title="Save table", defaultextension=".csv",
+                                         initialdir=os.path.dirname(self.file_var.get()),
+                                         initialfile=time.strftime("measurements_%Y%m%d_%H%M.csv"),
+                                         filetypes=[("CSV files", "*.csv")])
+        if not p:
+            return
+        import csv
+        with open(p, "w", newline="", encoding="utf-8") as fh:
+            w = csv.writer(fh)
+            w.writerow([self.data_tree.heading(c, "text") for c in self.data_tree["columns"]])
+            w.writerows(rows)
+        self.status(f"Table saved to {p}")
 
     def _add_row(self, tstr, seg, kind, vtot, vseg, emf, temp, drift):
         self.readings.append((vtot, emf, kind, seg))
@@ -888,9 +954,14 @@ class App(ttk.Frame):
         elif kind == "measured":
             key, v, temp = args
             self.emf_var.set(f"{v:.1f} mV")
-            self.emf_note.set(f"measured ({key})")
+            self.emf_note.set(f"measured ({key}) at {self.manual_volume:.4f} mL")
+            self._add_row(time.strftime("%H:%M:%S"), 0, "manual", self.manual_volume, self.manual_volume, v,
+                          temp, None)
+            self.redraw_plot()
             self.message(f"{key}: EMF {v:.1f} mV" + (f", {temp:.1f} °C" if temp is not None else ""))
         elif kind == "dispensed":
+            self.manual_volume += args[1]
+            self.info_vars["vtot"].set(f"{self.manual_volume:.4f} mL (manual)")
             self.message(f"{args[0]}: dispensed {args[1]:.4f} mL")
             self.status(f"Dispensed {args[1]:.4f} mL.")
         elif kind == "volume":
@@ -909,13 +980,9 @@ class App(ttk.Frame):
         elif kind == "finished":
             reason, path = args
             self.message(f"Titration finished: {reason}. Data: {path}")
-            extra = ""
-            if self.legacy_var.get():
-                dst = self.export_legacy(path)
-                if dst:
-                    extra = f"\nWinTitrate format: {dst}"
             self.file_var.set(self.default_file())
-            messagebox.showinfo("Titration finished", f"{reason}\n\nData saved to {path}{extra}")
+            self.manual_volume = self.readings[-1][0] if self.readings else 0.0
+            messagebox.showinfo("Titration finished", f"{reason}\n\nData saved to {path}")
 
     def drain_log(self):
         n = 0
@@ -943,10 +1010,13 @@ class App(ttk.Frame):
         busy = self.ctl.busy
         connected = bool(self.ctl.instruments)
         idle_ok = ["!disabled"] if (not busy and connected) else ["disabled"]
-        for b in (self.btn_start, self.btn_delayed, self.btn_measure, self.btn_monitor, self.btn_add, self.btn_fill):
+        for b in (self.btn_start, self.btn_delayed, self.btn_measure, self.btn_monitor, self.btn_fill):
             b.state(idle_ok)
-        self.btn_pause.state(["!disabled"] if self.titrating else ["disabled"])
-        self.btn_change.state(["!disabled"] if self.titrating else ["disabled"])
+        self.btn_add.state(["!disabled"] if (self.titrating or (not busy and connected)) else ["disabled"])
+        running = ["!disabled"] if self.titrating else ["disabled"]
+        for b in (self.btn_pause, self.btn_pause2, self.btn_apply, self.btn_apply_m):
+            b.state(running)
+        self.btn_change.state(running)
         self.btn_stop.state(["!disabled"] if busy else ["disabled"])
         self.btn_stop_manual.state(["!disabled"] if busy and not self.titrating else ["disabled"])
         self.file_entry.state(["disabled"] if self.titrating else ["!disabled"])

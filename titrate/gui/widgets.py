@@ -2,6 +2,7 @@
 
 import math
 import tkinter as tk
+from tkinter import font as tkfont
 from tkinter import ttk
 
 
@@ -14,7 +15,7 @@ class Form:
 
     def __init__(self, parent, label_width=24):
         self.frame = ttk.Frame(parent)
-        self.frame.columnconfigure(1, weight=1)
+        self.frame.columnconfigure(3, weight=1)   # spare space goes to the right, units stay next to fields
         self.vars = {}
         self.types = {}
         self.widgets = {}
@@ -22,17 +23,18 @@ class Form:
         self.row = 0
         self.label_width = label_width
 
-    def add(self, key, label, kind=float, unit="", width=10, choices=None, optional=False, tip=""):
+    def add(self, key, label, kind=float, unit="", width=10, choices=None, optional=False, tip="", var=None):
+        """Add a field. Pass `var` (e.g. other_form.vars[key]) to share the value with another form."""
         lab = ttk.Label(self.frame, text=label, width=self.label_width, anchor="w")
         lab.grid(row=self.row, column=0, sticky="w", pady=1)
         if kind is bool:
-            var = tk.BooleanVar()
+            var = var or tk.BooleanVar()
             w = ttk.Checkbutton(self.frame, variable=var)
         elif choices:
-            var = tk.StringVar()
+            var = var or tk.StringVar()
             w = ttk.Combobox(self.frame, textvariable=var, values=choices, state="readonly", width=width)
         else:
-            var = tk.StringVar()
+            var = var or tk.StringVar()
             w = ttk.Entry(self.frame, textvariable=var, width=width)
         w.grid(row=self.row, column=1, sticky="w", pady=1)
         if unit:
@@ -80,6 +82,22 @@ class Form:
     def enable(self, key, on):
         self.widgets[key].state(["!disabled"] if on else ["disabled"])
         self.labels[key].state(["!disabled"] if on else ["disabled"])
+
+
+def autosize_columns(tree, padding=16):
+    """Size every column of a ttk.Treeview to fit its heading and contents."""
+    head = tkfont.nametofont("TkHeadingFont")
+    body = tkfont.nametofont("TkDefaultFont")
+    cols = list(tree["columns"])
+    if "tree" in str(tree["show"]):
+        cols.insert(0, "#0")
+    items = tree.get_children()
+    for col in cols:
+        w = head.measure(tree.heading(col, "text")) + padding
+        for iid in items:
+            text = tree.item(iid, "text") if col == "#0" else tree.set(iid, col)
+            w = max(w, body.measure(str(text)) + padding)
+        tree.column(col, width=w, minwidth=w, stretch=False)
 
 
 class Tooltip:

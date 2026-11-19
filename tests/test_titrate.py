@@ -82,8 +82,8 @@ class SimulatorDriverTest(unittest.TestCase):
         with self.assertRaises(InstrumentError):
             self.ti.set("&Mode.Select", "NONSENSE")
 
-    def test_abbreviated_legacy_commands(self):
-        # The commands used by the old WinTitrate program
+    def test_abbreviated_commands(self):
+        # Abbreviated object names, which the Titrino command language allows
         self.ti.send('&M.S"MEAS"', '&M.MEA"U"')
         self.assertEqual(self.sim.values["Mode.MEASQuantity"], "U")
         self.ti.send('&A.B.M.S"volume"', '&A.B.R.F.S"digital"', '&A.B.R.F.D"10"', '&A.B.M.V"0.5"',
@@ -109,7 +109,7 @@ class StepTest(unittest.TestCase):
 
 
 class TitrationTest(unittest.TestCase):
-    def test_full_titration_and_legacy_export(self):
+    def test_full_titration(self):
         clock = Clock(1000)
         sim = SimulatedTitrino(clock=clock, seed=4, exv=10)
         ctl = Controller(clock)
@@ -138,21 +138,47 @@ class TitrationTest(unittest.TestCase):
             eq = [r for r in rows if r["kind"] == "eq"]
             self.assertEqual([float(r["v_total_ml"]) for r in eq], [0.0, 1.0, 2.0, 3.0, 4.0])
             self.assertEqual(meta["sample"]["v0_ml"], 50)
-            legacy = os.path.join(d, "t.txt")
-            datafile.export_legacy(legacy, meta, rows)
-            with open(legacy) as fh:
-                lines = fh.read().splitlines()
-            self.assertTrue(lines[0].startswith('"Datum",#'))
-            self.assertEqual(lines[1], '"Start:konc.",50,10,0,0,0,0,0')
-            self.assertEqual(lines[2], '"Byrkonc",-100,0,0,0,0,0,0')
-            self.assertEqual(len(lines), 3 + 5)
-            self.assertRegex(lines[4], r'^"\d\d \d\d \d\d",1,25,-?\.?\d')
 
-    def test_vb_number(self):
-        self.assertEqual(datafile.vb_number(0.5), ".5")
-        self.assertEqual(datafile.vb_number(-0.25), "-.25")
-        self.assertEqual(datafile.vb_number(3.0), "3")
-        self.assertEqual(datafile.vb_number(281.7), "281.7")
+
+class LiveChangesTest(unittest.TestCase):
+    def test_step_change_and_manual_addition(self):
+        clock = Clock(1000)
+        sim = SimulatedTitrino(clock=clock, seed=5, exv=20)
+        ctl = Controller(clock)
+        ins = Titrino(SimTransport(sim, "S"), clock)
+        ins.identify()
+        ctl.instruments["T1"] = ins
+        b = Burette("NaOH", "T1", concentrations={"H": -100, "B": 0, "C": 0, "D": 0}, rate=30)
+        m = Method(control="constant", eq_time_min=0.2, volume_step_ml=1.0, stop_volume_ml=5.0)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "t.csv")
+            ctl.run_titration(Sample("x", 50, 25, {"H": 10, "B": 0, "C": 0, "D": 0}), m, [b], [0], path, "T1")
+            n_eq, sent_step, sent_add = 0, False, False
+            while True:
+                ev = ctl.events.get(timeout=60)
+                if ev[0] == "error":
+                    self.fail(ev[1])
+                if ev[0] == "reading" and ev[1].kind == "eq":
+                    n_eq += 1
+                if ev[0] == "countdown" and n_eq == 1 and not sent_step:
+                    # during the equilibration of the 2nd point (at 1 mL), like a user would
+                    ctl.request_method_change({"volume_step_ml": 0.5})
+                    sent_step = True
+                if ev[0] == "countdown" and n_eq == 3 and not sent_add:
+                    ctl.request_addition(b, 0.25)   # during the equilibration of the 4th point
+                    sent_add = True
+                if ev[0] == "idle":
+                    break
+            meta, rows = datafile.read(path)
+            eq = [float(r["v_total_ml"]) for r in rows if r["kind"] == "eq"]
+            notes = [r["note"] for r in rows if r["kind"] == "event"]
+            # 0, 1 (step 1), then step 0.5: 1.5; the next point (2.0) is interrupted by the manual
+            # +0.25 mL, so it is re-measured at 2.25 and 2.0 is never accepted.
+            self.assertEqual(eq[:4], [0.0, 1.0, 1.5, 2.25])
+            self.assertNotIn(2.0, eq)
+            self.assertTrue(any(n.startswith("settings changed") for n in notes))
+            self.assertTrue(any(n.startswith("manual addition: 0.2500 mL") for n in notes))
+            self.assertAlmostEqual(sim.counter, eq[-1], places=3)
 
 
 if __name__ == "__main__":
