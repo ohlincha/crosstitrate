@@ -28,6 +28,16 @@ It replaces the old *WinTitrate* (Visual Basic 6, Windows-only) program used wit
   - A live communication log, and plain-language advice for each problem.
 - **Simulator.** Try everything without an instrument, at up to 300× speed.
 
+![Titrate running a titration (simulated 718 STAT Titrino)](docs/screenshot-titration.png)
+
+*A titration of a strong + weak acid mixture with NaOH, using the built-in simulator.
+Accepted points are blue; intermediate drift readings are grey.*
+
+![Connection diagnostics](docs/screenshot-diagnostics.png)
+
+*Connection test: the program identifies the instrument and reads back its RS232 settings.
+When something is wrong, it explains what to check.*
+
 ## Install
 
 Download from the [Releases page](https://github.com/ohlincha/titrate/releases/latest):

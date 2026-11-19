@@ -707,10 +707,7 @@ class App(ttk.Frame):
             sim.chem = chem
             sim.electrode = chem.emf()
             sim.counter = 0.0
-            for b in self.burettes:
-                if b.device == name:
-                    h = b.concentrations.get("H", 0)
-                    sim.titrant_conc = -h / 1000 if h else 0.1
+        self._prepare_sim_burettes()
 
     def start(self, start_at=None):
         prep = self._prepare()
@@ -772,11 +769,14 @@ class App(ttk.Frame):
         self.status("Burette change will be applied before the next addition.")
 
     def _prepare_sim_burettes(self):
+        """Simulator only: titrant of each simulated instrument = its active burette
+        (or its first burette if none of its burettes is active)."""
         for name, sim in self.sims.items():
-            for b in self.burettes:
-                if b.device == name:
-                    h = b.concentrations.get("H", 0)
-                    sim.titrant_conc = -h / 1000 if h else 0.1
+            mine = [i for i, b in enumerate(self.burettes) if b.device == name]
+            chosen = [i for i in mine if i in self.active] or mine
+            if chosen:
+                h = self.burettes[chosen[0]].concentrations.get("H", 0)
+                sim.titrant_conc = -h / 1000 if h else 0.1
 
     # =============================================================== data
     def open_data(self):
