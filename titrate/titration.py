@@ -174,6 +174,8 @@ class Controller:
         self.stop_event.clear()
         self.pause_event.clear()
         self.interrupt_event.clear()
+        while not self.requests.empty():   # drop requests meant for an earlier job
+            self.requests.get_nowait()
         self.jobs.put((name, fn, args))
         return True
 
@@ -250,22 +252,73 @@ class Controller:
             self.emit("measured", key, v, temp)
         return self.submit("measure", job)
 
-    def monitor(self, key, quantity="U", interval_s=1.0):
+    def monitor(self, key, quantity="U", interval_s=1.0, path=None, meta=None, v_total=0.0):
+        """Follow the EMF continuously. The display updates about once a second; if `path`
+        is given, a reading (with temperature) is written every `interval_s` seconds.
+        Notes sent with request_note() are written as event rows."""
+        interval_s = max(0.5, float(interval_s))
+
         def job():
             ins = self.instruments[key]
+            f = None
+            if path:
+                info = {"type": "EMF monitor", "software": f"Titrate {__version__}",
+                        "created": datafile.iso(time.time()),
+                        "instrument": f"{ins.profile.title} ({key})", "interval_s": interval_s}
+                info.update(meta or {})
+                f = datafile.DataFile(path, info)
             ins.start_measuring(quantity)
+            t0 = self.clock.now()
+            wall0 = time.time()
+            next_rec = t0
+            n = 0
+
+            def row(kind, emf=None, temp=None, note=""):
+                elapsed = self.clock.now() - t0
+                f.write(dict(timestamp=datafile.iso(wall0 + elapsed), elapsed_s=round(elapsed, 1),
+                             segment=0, kind=kind, v_total_ml=round(v_total, 4), emf_mv=emf,
+                             temperature_c=temp, note=note))
+            if f:
+                self.emit("monitor_started", path)
             try:
                 while True:
                     self.check_stop()
+                    while True:
+                        try:
+                            req = self.requests.get_nowait()
+                        except queue.Empty:
+                            break
+                        if req[0] == "note" and f:
+                            row("event", note=req[1])
+                            self.emit("note", self.clock.now() - t0, req[1])
                     try:
                         v = ins.read_measurement(retries=1)
-                        self.emit("live", key, v)
                     except InstrumentError as e:
                         if "NV" not in str(e) and "valid" not in str(e):
                             raise
-                    self.clock.sleep(interval_s, self.stop_event)
+                        v = None
+                    if v is not None:
+                        self.emit("live", key, v)
+                        now = self.clock.now()
+                        if f and now >= next_rec:
+                            temp = ins.read_temperature()
+                            row("monitor", v, temp)
+                            n += 1
+                            self.emit("monitor_reading", wall0 + (now - t0), now - t0, v, temp, v_total)
+                            next_rec += interval_s
+                            if next_rec < now:
+                                next_rec = now + interval_s
+                    wait = min(1.0, interval_s)
+                    if f:
+                        wait = max(0.05, min(wait, next_rec - self.clock.now()))
+                    self.clock.sleep(wait, self.stop_event)
             finally:
-                ins.stop_measuring()
+                try:
+                    ins.stop_measuring()
+                finally:
+                    if f:
+                        f.close()
+                        self.emit("monitor_finished", path, n)
         return self.submit("monitor", job)
 
     def dispense(self, key, select, volume, rate):
@@ -298,6 +351,10 @@ class Controller:
     def request_method_change(self, fields):
         """Change settings of the running titration (applied before the next addition)."""
         self.requests.put(("method", dict(fields)))
+
+    def request_note(self, text):
+        """Write a note into the data file of the running titration or EMF monitor."""
+        self.requests.put(("note", str(text)))
 
     def request_addition(self, burette, volume):
         """Manual addition during a titration: done at once, recorded, equilibration restarts."""
@@ -437,7 +494,10 @@ class TitrationJob:
                 req = self.ctl.requests.get_nowait()
             except queue.Empty:
                 return
-            if req[0] == "method":
+            if req[0] == "note":
+                self.record(None, "event", note=req[1])
+                self.emit("note", None, req[1])
+            elif req[0] == "method":
                 fields = {k: v for k, v in req[1].items() if k in LIVE_FIELDS}
                 for k, v in fields.items():
                     setattr(self.m, k, v)

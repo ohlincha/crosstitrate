@@ -181,5 +181,41 @@ class LiveChangesTest(unittest.TestCase):
             self.assertAlmostEqual(sim.counter, eq[-1], places=3)
 
 
+class MonitorTest(unittest.TestCase):
+    def test_monitor_writes_file_with_notes(self):
+        clock = Clock(100)
+        sim = SimulatedTitrino(clock=clock, seed=3)
+        ctl = Controller(clock)
+        ins = Titrino(SimTransport(sim, "S"), clock)
+        ins.identify()
+        ctl.instruments["T1"] = ins
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "m.csv")
+            self.assertTrue(ctl.monitor("T1", interval_s=10, path=path))
+            n, noted = 0, False
+            while True:
+                ev = ctl.events.get(timeout=60)
+                if ev[0] == "error":
+                    self.fail(ev[1])
+                if ev[0] == "monitor_reading":
+                    n += 1
+                    if n == 3 and not noted:
+                        ctl.request_note("ice forming")
+                        noted = True
+                    if n == 6:
+                        ctl.stop()
+                if ev[0] == "idle":
+                    break
+            meta, rows = datafile.read(path)
+            self.assertEqual(meta["type"], "EMF monitor")
+            mon = [r for r in rows if r["kind"] == "monitor"]
+            self.assertGreaterEqual(len(mon), 6)
+            elapsed = [float(r["elapsed_s"]) for r in mon]
+            gaps = [b - a for a, b in zip(elapsed, elapsed[1:])]
+            self.assertTrue(all(8 <= g <= 13 for g in gaps), gaps)
+            self.assertTrue(all(r["emf_mv"] for r in mon))
+            self.assertIn("ice forming", [r["note"] for r in rows if r["kind"] == "event"])
+
+
 if __name__ == "__main__":
     unittest.main()

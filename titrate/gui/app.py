@@ -41,6 +41,8 @@ class App(ttk.Frame):
         self.markers = []
         self.manual_volume = 0.0       # volume added manually outside a titration (for the table/plot)
         self.titrating = False
+        self.monitoring = False
+        self.x_mode = "volume"         # plot x axis: "volume" (titration) or "time" (EMF monitor)
         self.log_queue = queue.Queue()
         self.ui_queue = queue.Queue()   # callables from worker threads, run on the Tk thread
         transport.LOG.listeners.append(self.log_queue.put)
@@ -141,6 +143,10 @@ class App(ttk.Frame):
         self.btn_monitor.pack(side="left", padx=4)
         self.btn_stop_manual = ttk.Button(r1, text="Stop", command=self.ctl.stop)
         self.btn_stop_manual.pack(side="left")
+        ttk.Label(r1, text="save every").pack(side="left", padx=(10, 2))
+        self.mon_interval = tk.StringVar(value=str(self.cfg.get("monitor_interval_s", 5)))
+        ttk.Entry(r1, textvariable=self.mon_interval, width=5).pack(side="left")
+        ttk.Label(r1, text="s").pack(side="left", padx=(2, 0))
         r2 = ttk.Frame(man)
         r2.pack(fill="x", pady=(6, 0))
         ttk.Label(r2, text="Add").pack(side="left")
@@ -154,9 +160,18 @@ class App(ttk.Frame):
         self.btn_add.pack(side="left", padx=2)
         self.btn_fill = ttk.Button(r2, text="Fill", command=self.manual_fill)
         self.btn_fill.pack(side="left")
-        ttk.Label(man, text="During a titration, additions are recorded in the data file and the "
-                            "equilibration restarts.", foreground="#777", wraplength=430,
-                  justify="left").pack(anchor="w", pady=(4, 0))
+        r3 = ttk.Frame(man)
+        r3.pack(fill="x", pady=(6, 0))
+        ttk.Label(r3, text="Note").pack(side="left")
+        self.note_var = tk.StringVar()
+        note_entry = ttk.Entry(r3, textvariable=self.note_var)
+        note_entry.pack(side="left", fill="x", expand=True, padx=2)
+        note_entry.bind("<Return>", lambda e: self.add_note())
+        self.btn_note = ttk.Button(r3, text="Add note", command=self.add_note)
+        self.btn_note.pack(side="left", padx=2)
+        ttk.Label(man, text="Monitor EMF writes to the data file until you press Stop. Additions during "
+                            "a titration and notes are recorded in the data file.", foreground="#777",
+                  wraplength=430, justify="left").pack(anchor="w", pady=(4, 0))
         self.refresh_instruments()
 
     def _build_burettes(self, nb):
@@ -647,9 +662,56 @@ class App(ttk.Frame):
 
     def monitor(self):
         name = self._meas_instrument()
-        if name:
-            self.status("Monitoring EMF - press Stop to end.")
-            self.ctl.monitor(name)
+        if not name:
+            return
+        try:
+            interval = float(self.mon_interval.get().replace(",", "."))
+            if not 0.5 <= interval <= 86400:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("Monitor EMF", "Enter a save interval between 0.5 and 86400 seconds.")
+            return
+        path = self.file_var.get().strip()
+        if os.path.basename(path).startswith("titration_") and not os.path.exists(path):
+            path = os.path.join(os.path.dirname(path), time.strftime("monitor_%Y%m%d_%H%M.csv"))
+            self.file_var.set(path)
+        if not path:
+            messagebox.showerror("Monitor EMF", "Choose a data file.")
+            return
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        except OSError as e:
+            messagebox.showerror("Monitor EMF", f"Cannot create folder: {e}")
+            return
+        if os.path.exists(path) and not messagebox.askyesno("Overwrite?", f"{path}\nexists. Overwrite it?"):
+            return
+        self.cfg["monitor_interval_s"] = interval
+        self.save_settings()
+        meta = {"sample": dataclasses.asdict(self.sample)}
+        self._clear_data("time")
+        if self.ctl.monitor(name, interval_s=interval, path=path, meta=meta, v_total=self.manual_volume):
+            self.monitoring = True
+            self.current_path = path
+            self.status(f"Monitoring EMF, saving every {interval:g} s - press Stop to end.")
+            self._update_buttons()
+
+    def add_note(self):
+        text = self.note_var.get().strip()
+        if not text:
+            return
+        if not (self.titrating or self.monitoring):
+            self.status("Notes are written to the data file while a titration or EMF monitor is running.")
+            return
+        self.ctl.request_note(text)
+        self.note_var.set("")
+
+    def _clear_data(self, x_mode):
+        self.readings.clear()
+        self.markers.clear()
+        self.plot.clear()
+        self.data_tree.delete(*self.data_tree.get_children())
+        self.x_mode = x_mode
+        self.plot.xlabel = "Time (min)" if x_mode == "time" else "Volume added (mL)"
 
     def _manual_burette(self):
         names = [b.name for b in self.burettes]
@@ -753,10 +815,7 @@ class App(ttk.Frame):
         if not prep:
             return
         sample, method, meas, path = prep
-        self.readings.clear()
-        self.markers.clear()
-        self.plot.clear()
-        self.data_tree.delete(*self.data_tree.get_children())
+        self._clear_data("volume")
         self.manual_volume = 0.0
         self.info_vars["step"].set(f"{method.volume_step_ml:g} mL")
         extra = {"note": "Created with Titrate; see the README for the file format."}
@@ -857,18 +916,22 @@ class App(ttk.Frame):
         except Exception as e:  # noqa: BLE001
             messagebox.showerror("Open", f"Cannot read {p}: {e}")
             return
-        self.readings.clear()
-        self.markers.clear()
-        self.data_tree.delete(*self.data_tree.get_children())
+        monitor = meta.get("type") == "EMF monitor" or any(r.get("kind") == "monitor" for r in rows)
+        self._clear_data("time" if monitor else "volume")
+        num = lambda x: float(x) if x not in (None, "") else None
         for r in rows:
+            elapsed_min = (num(r.get("elapsed_s")) or 0.0) / 60
             if r.get("emf_mv", "") == "":
                 if r.get("kind") == "event":
-                    self.markers.append((float(r["v_total_ml"] or 0), f"seg {int(r['segment']) }"))
+                    note = r.get("note", "")
+                    if monitor:
+                        self.markers.append((elapsed_min, note[:20]))
+                    elif note.startswith("burette change"):
+                        self.markers.append((num(r["v_total_ml"]) or 0, f"seg {int(r['segment'])}"))
                 continue
-            self._add_row(r["timestamp"][11:19], int(r["segment"]), r["kind"], float(r["v_total_ml"]),
-                          float(r["v_segment_ml"]), float(r["emf_mv"]),
-                          float(r["temperature_c"]) if r["temperature_c"] else None,
-                          float(r["drift_mv"]) if r["drift_mv"] else None)
+            self._add_row(r["timestamp"][11:19], int(r["segment"] or 0), r["kind"], num(r["v_total_ml"]) or 0,
+                          num(r["v_segment_ml"]) or 0, float(r["emf_mv"]), num(r["temperature_c"]),
+                          num(r["drift_mv"]), x=elapsed_min if monitor else None)
         self.redraw_plot()
         self.status(f"Loaded {p} ({len(rows)} rows).")
 
@@ -891,8 +954,8 @@ class App(ttk.Frame):
             w.writerows(rows)
         self.status(f"Table saved to {p}")
 
-    def _add_row(self, tstr, seg, kind, vtot, vseg, emf, temp, drift):
-        self.readings.append((vtot, emf, kind, seg))
+    def _add_row(self, tstr, seg, kind, vtot, vseg, emf, temp, drift, x=None):
+        self.readings.append((vtot if x is None else x, emf, kind, seg))
         self.data_tree.insert("", "end", values=(tstr, seg, kind, f"{vtot:.4f}", f"{vseg:.4f}", f"{emf:.1f}",
                                                  "" if temp is None else f"{temp:.1f}",
                                                  "" if drift is None else f"{drift:.2f}"),
@@ -900,7 +963,7 @@ class App(ttk.Frame):
         self.data_tree.yview_moveto(1.0)
 
     def redraw_plot(self):
-        eq = [(v, e) for v, e, k, s in self.readings if k in ("eq", "manual")]
+        eq = [(v, e) for v, e, k, s in self.readings if k in ("eq", "manual", "monitor")]
         dr = [(v, e) for v, e, k, s in self.readings if k == "drift"]
         self.plot.markers = list(self.markers)
         self.plot.set_series("drift", dr, color="#bbbbbb", line=False, dot=2)
@@ -927,6 +990,7 @@ class App(ttk.Frame):
             self._update_buttons()
         elif kind == "idle":
             self.titrating = False
+            self.monitoring = False
             self.info_vars["next"].set("—")
             self._update_buttons()
         elif kind == "status":
@@ -959,6 +1023,25 @@ class App(ttk.Frame):
                           temp, None)
             self.redraw_plot()
             self.message(f"{key}: EMF {v:.1f} mV" + (f", {temp:.1f} °C" if temp is not None else ""))
+        elif kind == "monitor_started":
+            self.message(f"EMF monitor started, writing {args[0]}")
+        elif kind == "monitor_reading":
+            t, elapsed, v, temp, vtot = args
+            self._add_row(time.strftime("%H:%M:%S", time.localtime(t)), 0, "monitor", vtot, vtot, v, temp, None,
+                          x=elapsed / 60)
+            self.redraw_plot()
+        elif kind == "monitor_finished":
+            path, n = args
+            self.monitoring = False
+            self.message(f"EMF monitor stopped: {n} readings saved to {path}")
+            self.status(f"EMF monitor stopped; {n} readings saved to {path}")
+            self.file_var.set(self.default_file())
+        elif kind == "note":
+            elapsed, text = args
+            self.message(f"Note: {text}")
+            if elapsed is not None and self.x_mode == "time":
+                self.markers.append((elapsed / 60, text[:20]))
+                self.redraw_plot()
         elif kind == "dispensed":
             self.manual_volume += args[1]
             self.info_vars["vtot"].set(f"{self.manual_volume:.4f} mL (manual)")
@@ -1019,7 +1102,8 @@ class App(ttk.Frame):
         self.btn_change.state(running)
         self.btn_stop.state(["!disabled"] if busy else ["disabled"])
         self.btn_stop_manual.state(["!disabled"] if busy and not self.titrating else ["disabled"])
-        self.file_entry.state(["disabled"] if self.titrating else ["!disabled"])
+        self.file_entry.state(["disabled"] if (self.titrating or self.monitoring) else ["!disabled"])
+        self.btn_note.state(["!disabled"] if (self.titrating or self.monitoring) else ["disabled"])
 
     def on_close(self):
         if self.ctl.busy and not messagebox.askyesno("Quit", "A job is running. Stop it and quit?"):

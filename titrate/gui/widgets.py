@@ -140,9 +140,9 @@ def nice_ticks(lo, hi, n=6):
 def fmt_tick(v, span):
     if span >= 50:
         return f"{v:.0f}"
-    if span >= 5:
-        return f"{v:.1f}".rstrip("0").rstrip(".")
-    return f"{v:.3g}"
+    decimals = max(1, min(6, 1 - math.floor(math.log10(span / 5)))) if span > 0 else 2
+    text = f"{v:.{decimals}f}"
+    return text.rstrip("0").rstrip(".") if "." in text else text
 
 
 class Plot(tk.Canvas):
@@ -188,8 +188,9 @@ class Plot(tk.Canvas):
             xlo, xhi, ylo, yhi = 0, 1, -100, 100
         if xhi - xlo < 1e-9:
             xhi = xlo + max(1.0, abs(xlo) * 0.1)
-        if yhi - ylo < 1e-9:
-            ylo, yhi = ylo - 5, yhi + 5
+        if yhi - ylo < 1.0:     # don't magnify noise below the 0.1 mV resolution
+            mid = (yhi + ylo) / 2
+            ylo, yhi = mid - 0.5, mid + 0.5
         ypad = (yhi - ylo) * 0.07
         ylo, yhi = ylo - ypad, yhi + ypad
         xhi += (xhi - xlo) * 0.03

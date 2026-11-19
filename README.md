@@ -21,7 +21,9 @@ Titrino.
     the instrument's own volume counter.
 - **Live plot and data table.**
   - Every reading is saved immediately, so a crash or power cut loses nothing.
-  - Pause and resume, delayed start, manual measure/monitor/add/fill.
+  - Pause and resume, delayed start, manual measure/add/fill.
+- **EMF monitor:** logs the EMF against time to a file at a set interval, with notes, e.g.
+  to follow a sample while it freezes.
 - **Diagnostics:**
   - Port and permission checks, handshake-line status.
   - Automatic baud and parity scan, instrument identification.
@@ -99,8 +101,20 @@ Network serial servers (e.g. Moxa NPort) also work: enter `socket://host:port` a
      The equilibration then restarts at the new volume.
    - **Change burette…** switches burettes, or updates concentrations, at the next addition.
      The data file records the change, and the segment volume restarts at 0.
+   - **Notes** typed in the *Note* field are written into the data file at that moment.
 6. Outside a titration, **Measure EMF** and manual additions appear in the table and plot.
    Use **Save table…** to keep them.
+
+## Monitoring the EMF over time
+
+**Monitor EMF** (Manual control) follows the EMF without adding anything. The display updates
+about once a second. A reading, with temperature, is written to the data file every *save every*
+seconds, until you press **Stop**. The plot shows EMF against time. Notes (e.g. "ice forming")
+are written into the file and marked on the plot. The file is named `monitor_….csv` unless
+you choose another name, and **Open data…** shows it again later.
+
+The temperature column holds whatever the Titrino reports. Without a temperature sensor
+this is probably the temperature entered manually on the instrument, not a measurement.
 
 ## Data files
 
@@ -111,8 +125,9 @@ instruments and start/end times as JSON. It's followed by one row per reading:
 timestamp,elapsed_s,segment,kind,burettes,v_total_ml,v_segment_ml,emf_mv,temperature_c,drift_mv,note
 ```
 
-`kind` is `eq` (accepted point), `drift` (intermediate reading) or `event` (burette change,
-manual addition, or settings change; details in `note`). `v_total_ml` is cumulative over the whole titration; `v_segment_ml` restarts at
+`kind` is `eq` (accepted point), `drift` (intermediate reading), `manual`, `monitor` (EMF
+monitor reading) or `event` (burette change, manual addition, settings change or note; details
+in `note`). `v_total_ml` is cumulative over the whole titration; `v_segment_ml` restarts at
 each burette change.
 
 ## Supported instruments
