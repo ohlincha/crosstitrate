@@ -40,7 +40,7 @@ When something is wrong, it explains what to check.*
 
 ## Install
 
-Download from the [Releases page](https://github.com/ohlincha/titrate/releases/latest):
+Download from the [Releases page](https://github.com/ohlincha/titrate/releases) (newest at the top; v0.x releases are marked *Pre-release*):
 
 | System | File | How |
 |---|---|---|
