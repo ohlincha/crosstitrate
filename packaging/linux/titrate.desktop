@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Titrate
+Comment=Titration control for Metrohm Titrino instruments
+Exec=titrate
+Icon=applications-science
+Terminal=false
+Categories=Science;Chemistry;Education;

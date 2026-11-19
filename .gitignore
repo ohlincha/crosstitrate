@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+# The old WinTitrate program (third-party code) is kept locally only
+WinTitrate/
+WinTitrate.zip

@@ -1,0 +1,159 @@
+import os
+import sys
+import tempfile
+import time
+import unittest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from titrate import datafile, models, protocol  # noqa: E402
+from titrate.instrument import InstrumentError, Titrino  # noqa: E402
+from titrate.simulator import Clock, SimulatedTitrino  # noqa: E402
+from titrate.titration import Burette, Controller, Method, Sample, next_step  # noqa: E402
+from titrate.transport import SimTransport  # noqa: E402
+
+
+class ProtocolTest(unittest.TestCase):
+    def test_format_number(self):
+        self.assertEqual(protocol.format_number(0.1), "0.1")
+        self.assertEqual(protocol.format_number(1.23456), "1.2346")
+        self.assertEqual(protocol.format_number(12345.678), "12345.7")
+        self.assertEqual(protocol.format_number(10), "10")
+        self.assertEqual(protocol.format_number(-0.00001), "0")
+
+    def test_set_cmd(self):
+        self.assertEqual(protocol.set_cmd("&Mode.Select", "MEAS"), '&Mode.Select "MEAS"')
+        self.assertEqual(protocol.set_cmd("&Assembly.Bur.ModeDis.V", 0.25), '&Assembly.Bur.ModeDis.V "0.25"')
+        with self.assertRaises(protocol.ProtocolError):
+            protocol.set_cmd("&X", 'bad"value')
+
+    def test_parse_value_and_float(self):
+        self.assertEqual(protocol.parse_float('"-345.6"\r\r\n'), (-345.6, None))
+        self.assertEqual(protocol.parse_float('"NV"\r\r\n'), (None, "NV"))
+        self.assertEqual(protocol.parse_float('"not valid"\r\r\n'), (None, "NV"))
+        self.assertEqual(protocol.parse_float('"OV"\r\r\n'), (None, "OV"))
+        self.assertEqual(protocol.parse_value('"718.0010"\r\r\n'), "718.0010")
+
+    def test_status(self):
+        s = protocol.Status("$G.Assembly.Bur.ModeDis;E27\r\r\n")
+        self.assertTrue(s.busy)
+        self.assertEqual(s.errors, ["E27"])
+        s = protocol.Status("$R.Mode.MEAS.Inac")
+        self.assertTrue(s.ready)
+        self.assertEqual(s.errors, [])
+        self.assertIn("ready", s.describe())
+
+    def test_profiles(self):
+        self.assertEqual(models.profile_for_prog("718.0010").model, "718")
+        self.assertTrue(models.profile_for_prog("751.0020").multi_burette)
+        self.assertIs(models.profile_for_prog("999.1"), models.GENERIC)
+
+
+class SimulatorDriverTest(unittest.TestCase):
+    def setUp(self):
+        self.clock = Clock(500)
+        self.sim = SimulatedTitrino(clock=self.clock, seed=1, exv=5)
+        self.ti = Titrino(SimTransport(self.sim), self.clock)
+
+    def test_identify(self):
+        info = self.ti.identify()
+        self.assertEqual(info["prog"], "718.0012")
+        self.assertEqual(info["exv"], 5.0)
+
+    def test_measure(self):
+        self.ti.identify()
+        self.ti.start_measuring("U")
+        time.sleep(0.01)
+        v = self.ti.read_measurement()
+        self.assertAlmostEqual(v, self.sim.chem.emf(), delta=2)
+        self.ti.stop_measuring()
+
+    def test_dispense_with_refill(self):
+        self.ti.identify()
+        done = self.ti.dispense(7.0, rate=20)
+        self.assertAlmostEqual(done, 7.0, places=3)
+        self.assertAlmostEqual(self.sim.counter, 7.0, places=3)
+        self.assertLessEqual(self.ti.piston_used, 5.0)
+
+    def test_errors(self):
+        with self.assertRaises(InstrumentError) as cm:
+            self.ti.send("&No.Such.Object $Q")
+        self.assertIn("E28", cm.exception.codes)
+        with self.assertRaises(InstrumentError):
+            self.ti.set("&Mode.Select", "NONSENSE")
+
+    def test_abbreviated_legacy_commands(self):
+        # The commands used by the old WinTitrate program
+        self.ti.send('&M.S"MEAS"', '&M.MEA"U"')
+        self.assertEqual(self.sim.values["Mode.MEASQuantity"], "U")
+        self.ti.send('&A.B.M.S"volume"', '&A.B.R.F.S"digital"', '&A.B.R.F.D"10"', '&A.B.M.V"0.5"',
+                     '&A.B.M $G')
+        self.ti.wait_ready(30)
+        self.assertAlmostEqual(self.sim.counter, 0.5, places=4)
+
+    def test_rs_control_off(self):
+        sim = SimulatedTitrino(clock=self.clock, rs_control=False)
+        ti = Titrino(SimTransport(sim), self.clock)
+        self.assertFalse(ti.ping())
+
+
+class StepTest(unittest.TestCase):
+    def test_adaptive(self):
+        m = Method(adaptive=True, halve_if_de_gt=10, double_if_de_lt=2, min_step_ml=0.05, max_step_ml=1)
+        self.assertEqual(next_step(0.4, 20, m), 0.2)
+        self.assertEqual(next_step(0.4, 1, m), 0.8)
+        self.assertEqual(next_step(0.8, 1, m), 0.8)     # would exceed max
+        self.assertEqual(next_step(0.06, 30, m), 0.06)  # would go below min
+        self.assertEqual(next_step(0.4, 5, m), 0.4)
+        self.assertEqual(next_step(0.4, 50, Method(adaptive=False)), 0.4)
+
+
+class TitrationTest(unittest.TestCase):
+    def test_full_titration_and_legacy_export(self):
+        clock = Clock(1000)
+        sim = SimulatedTitrino(clock=clock, seed=4, exv=10)
+        ctl = Controller(clock)
+        ins = Titrino(SimTransport(sim, "S"), clock)
+        ins.identify()
+        ctl.instruments["T1"] = ins
+        b = Burette("NaOH", "T1", concentrations={"H": -100, "B": 0, "C": 0, "D": 0}, rate=30)
+        m = Method(control="constant", eq_time_min=0.1, volume_step_ml=1.0, stop_volume_ml=4.0)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "t.csv")
+            self.assertTrue(ctl.run_titration(Sample("x", 50, 25, {"H": 10, "B": 0, "C": 0, "D": 0}), m, [b],
+                                              [0], path, "T1"))
+            finished = None
+            deadline = time.time() + 60
+            while time.time() < deadline:
+                ev = ctl.events.get(timeout=60)
+                if ev[0] == "finished":
+                    finished = ev
+                if ev[0] == "error":
+                    self.fail(ev[1])
+                if ev[0] == "idle":
+                    break
+            self.assertIsNotNone(finished)
+            self.assertIn("stop volume", finished[1])
+            meta, rows = datafile.read(path)
+            eq = [r for r in rows if r["kind"] == "eq"]
+            self.assertEqual([float(r["v_total_ml"]) for r in eq], [0.0, 1.0, 2.0, 3.0, 4.0])
+            self.assertEqual(meta["sample"]["v0_ml"], 50)
+            legacy = os.path.join(d, "t.txt")
+            datafile.export_legacy(legacy, meta, rows)
+            with open(legacy) as fh:
+                lines = fh.read().splitlines()
+            self.assertTrue(lines[0].startswith('"Datum",#'))
+            self.assertEqual(lines[1], '"Start:konc.",50,10,0,0,0,0,0')
+            self.assertEqual(lines[2], '"Byrkonc",-100,0,0,0,0,0,0')
+            self.assertEqual(len(lines), 3 + 5)
+            self.assertRegex(lines[4], r'^"\d\d \d\d \d\d",1,25,-?\.?\d')
+
+    def test_vb_number(self):
+        self.assertEqual(datafile.vb_number(0.5), ".5")
+        self.assertEqual(datafile.vb_number(-0.25), "-.25")
+        self.assertEqual(datafile.vb_number(3.0), "3")
+        self.assertEqual(datafile.vb_number(281.7), "281.7")
+
+
+if __name__ == "__main__":
+    unittest.main()
