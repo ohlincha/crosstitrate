@@ -159,7 +159,13 @@ class Titrino:
     def stop_measuring(self):
         self.send(protocol.trigger_cmd(P.mode, protocol.STOP), check=False)
         self.measuring = False
+        # A real 785 DMP takes longer than a fixed short pause to leave measuring mode; a dosing
+        # command sent too early fails with E31 ("not possible while active"). Wait for the status.
         time.sleep(0.2)
+        try:
+            self.wait_ready(timeout=10)
+        except InstrumentError:
+            pass
 
     # ------------------------------------------------------------- burette
     def _select_burette(self):

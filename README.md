@@ -139,7 +139,7 @@ model from its program version and adapts to it.
 |---|---|
 | 718 STAT Titrino | Reference model (command set taken from its manual) |
 | 702, 716, 719, 736, 794 | Standard Titrinos |
-| **785 DMP** | **Tested with real hardware** (identify, EMF, dosing, filling) |
+| **785 DMP** | **Tested with real hardware** (identify, EMF, dosing, filling, a full titration run) |
 | 751 GPD, 798 MPT, 799 GPT | Also burettes D0/D1/D2 on one instrument |
 | 720, 758, 784, 795 (KF) | No mV measurement; usable as burettes |
 
