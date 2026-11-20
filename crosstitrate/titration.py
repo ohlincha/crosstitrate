@@ -262,7 +262,7 @@ class Controller:
             ins = self.instruments[key]
             f = None
             if path:
-                info = {"type": "EMF monitor", "software": f"Titrate {__version__}",
+                info = {"type": "EMF monitor", "software": f"CrossTitrate {__version__}",
                         "created": datafile.iso(time.time()),
                         "instrument": f"{ins.profile.title} ({key})", "interval_s": interval_s}
                 info.update(meta or {})

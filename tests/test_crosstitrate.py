@@ -6,11 +6,11 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from titrate import datafile, models, protocol  # noqa: E402
-from titrate.instrument import InstrumentError, Titrino  # noqa: E402
-from titrate.simulator import Clock, SimulatedTitrino  # noqa: E402
-from titrate.titration import Burette, Controller, Method, Sample, next_step  # noqa: E402
-from titrate.transport import SimTransport  # noqa: E402
+from crosstitrate import datafile, models, protocol  # noqa: E402
+from crosstitrate.instrument import InstrumentError, Titrino  # noqa: E402
+from crosstitrate.simulator import Clock, SimulatedTitrino  # noqa: E402
+from crosstitrate.titration import Burette, Controller, Method, Sample, next_step  # noqa: E402
+from crosstitrate.transport import SimTransport  # noqa: E402
 
 
 class ProtocolTest(unittest.TestCase):

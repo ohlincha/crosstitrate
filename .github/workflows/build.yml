@@ -39,9 +39,9 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: pip install pyinstaller pyserial
-      - run: pyinstaller --noconfirm --onefile --windowed --name Titrate --collect-submodules serial titrate_app.py
+      - run: pyinstaller --noconfirm --onefile --windowed --name CrossTitrate --collect-submodules serial crosstitrate_app.py
       - uses: actions/upload-artifact@v4
-        with: { name: windows-exe, path: dist/Titrate.exe }
+        with: { name: windows-exe, path: dist/CrossTitrate.exe }
 
   macos:
     needs: test
@@ -52,12 +52,12 @@ jobs:
         with: { python-version: "3.12" }
       - run: pip install pyinstaller pyserial
       - run: |
-          pyinstaller --noconfirm --windowed --name Titrate --collect-submodules serial \
-            --osx-bundle-identifier io.github.ohlincha.titrate titrate_app.py
-          mkdir -p dmg && cp -R dist/Titrate.app dmg/ && ln -s /Applications dmg/Applications
-          hdiutil create -volname Titrate -srcfolder dmg -ov -format UDZO dist/Titrate-macOS.dmg
+          pyinstaller --noconfirm --windowed --name CrossTitrate --collect-submodules serial \
+            --osx-bundle-identifier io.github.ohlincha.crosstitrate crosstitrate_app.py
+          mkdir -p dmg && cp -R dist/CrossTitrate.app dmg/ && ln -s /Applications dmg/Applications
+          hdiutil create -volname CrossTitrate -srcfolder dmg -ov -format UDZO dist/CrossTitrate-macOS.dmg
       - uses: actions/upload-artifact@v4
-        with: { name: macos-dmg, path: dist/Titrate-macOS.dmg }
+        with: { name: macos-dmg, path: dist/CrossTitrate-macOS.dmg }
 
   release:
     # Publish whatever built, even if one platform failed (e.g. no macOS runner available).

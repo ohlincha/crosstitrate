@@ -12,7 +12,15 @@ def config_dir():
         base = os.path.expanduser("~/Library/Application Support")
     else:
         base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
-    return os.path.join(base, "titrate")
+    new = os.path.join(base, "crosstitrate")
+    old = os.path.join(base, "titrate")          # name before v0.4: keep existing settings
+    if not os.path.exists(new) and os.path.isdir(old):
+        try:
+            import shutil
+            shutil.copytree(old, new)
+        except OSError:
+            return old
+    return new
 
 
 def data_dir():

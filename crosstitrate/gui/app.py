@@ -818,7 +818,7 @@ class App(ttk.Frame):
         self._clear_data("volume")
         self.manual_volume = 0.0
         self.info_vars["step"].set(f"{method.volume_step_ml:g} mL")
-        extra = {"note": "Created with Titrate; see the README for the file format."}
+        extra = {"note": "Created with CrossTitrate; see the README for the file format."}
         if self.ctl.run_titration(sample, method, self.burettes, self.active, path, meas, extra, start_at):
             self.titrating = True
             self.current_path = path
@@ -1122,7 +1122,7 @@ class App(ttk.Frame):
 
 def main():
     root = tk.Tk()
-    root.title(f"Titrate {__version__}")
+    root.title(f"CrossTitrate {__version__}")
     root.geometry("1280x820")
     root.minsize(1000, 650)
     app = App(root)

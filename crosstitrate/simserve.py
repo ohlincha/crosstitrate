@@ -2,8 +2,8 @@
 Serve a simulated Titrino on a virtual serial port (Linux/macOS pty) or a TCP
 port, so the real serial code path can be tested without hardware.
 
-    python -m titrate.simserve            # prints e.g. /dev/pts/5
-    python -m titrate.simserve --tcp 7000 # connect to socket://localhost:7000
+    python -m crosstitrate.simserve            # prints e.g. /dev/pts/5
+    python -m crosstitrate.simserve --tcp 7000 # connect to socket://localhost:7000
 """
 
 import argparse

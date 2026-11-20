@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=Titrate
+Name=CrossTitrate
 Comment=Titration control for Metrohm Titrino instruments
-Exec=titrate
+Exec=crosstitrate
 Icon=applications-science
 Terminal=false
 Categories=Science;Chemistry;Education;

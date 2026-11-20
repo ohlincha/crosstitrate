@@ -1,7 +1,10 @@
-# Titrate
+# CrossTitrate
 
 Cross-platform titration software for **Metrohm Titrino** instruments controlled over
-RS232. Titrate runs potentiometric (EMF) titrations, plots them live, and saves the data.
+RS232. CrossTitrate runs potentiometric (EMF) titrations, plots them live, and saves the data.
+
+*CrossTitrate is an independent project, not affiliated with or endorsed by Metrohm. Product names
+are used only to describe compatibility.*
 It also includes connection diagnostics and a built-in simulator.
 
 It was written to replace an old Windows-only Visual Basic program used with a 718 STAT
@@ -30,7 +33,7 @@ Titrino.
   - A live communication log, and plain-language advice for each problem.
 - **Simulator.** Try everything without an instrument, at up to 300× speed.
 
-![Titrate running a titration (simulated 718 STAT Titrino)](docs/screenshot-titration.png)
+![CrossTitrate running a titration (simulated 718 STAT Titrino)](docs/screenshot-titration.png)
 
 *A titration of a strong + weak acid mixture with NaOH, using the built-in simulator.
 Accepted points are blue; intermediate drift readings are grey.*
@@ -42,15 +45,15 @@ When something is wrong, it explains what to check.*
 
 ## Install
 
-Download from the [Releases page](https://github.com/ohlincha/titrate/releases) (newest at the top; v0.x releases are marked *Pre-release*):
+Download from the [Releases page](https://github.com/ohlincha/crosstitrate/releases) (newest at the top; v0.x releases are marked *Pre-release*):
 
 | System | File | How |
 |---|---|---|
-| Windows | `Titrate.exe` | Run it. If SmartScreen warns, choose *More info → Run anyway*. |
-| macOS | `Titrate-macOS.dmg` | Drag *Titrate* to Applications. The first time, right-click → *Open*. |
-| Linux (Debian/Ubuntu) | `titrate_<version>_all.deb` | `sudo apt install ./titrate_*_all.deb`, then `sudo usermod -aG dialout $USER` and log out and in again. |
+| Windows | `CrossTitrate.exe` | Run it. If SmartScreen warns, choose *More info → Run anyway*. |
+| macOS | `CrossTitrate-macOS.dmg` | Drag *CrossTitrate* to Applications. The first time, right-click → *Open*. |
+| Linux (Debian/Ubuntu) | `crosstitrate_<version>_all.deb` | `sudo apt install ./crosstitrate_*_all.deb`, then `sudo usermod -aG dialout $USER` and log out and in again. |
 
-From source, on any OS, with Python ≥ 3.8 and Tk: `pip install pyserial`, then `python -m titrate`.
+From source, on any OS, with Python ≥ 3.8 and Tk: `pip install pyserial`, then `python -m crosstitrate`.
 
 ## Connecting a Titrino
 
@@ -70,8 +73,8 @@ From source, on any OS, with Python ≥ 3.8 and Tk: `pip install pyserial`, then
    | **RS control** | **ON**. With OFF, the Titrino ignores all commands. |
 
    Under `>peripheral units`, set *send to* to `IBM`. Leave the instrument idle, at its
-   normal display. Titrate selects MEAS mode and dispensing by itself.
-3. **In Titrate:** *Instruments → Connect…*, choose the port, and press **Test connection**.
+   normal display. CrossTitrate selects MEAS mode and dispensing by itself.
+3. **In CrossTitrate:** *Instruments → Connect…*, choose the port, and press **Test connection**.
    If it fails, the diagnostics say why and try other settings for you.
 
 Network serial servers (e.g. Moxa NPort) also work: enter `socket://host:port` as the port.
@@ -132,7 +135,7 @@ each burette change.
 
 ## Supported instruments
 
-All Titrinos with RS232 remote control share one command language. Titrate identifies the
+All Titrinos with RS232 remote control share one command language. CrossTitrate identifies the
 model from its program version and adapts to it.
 
 | Model | Notes |
@@ -173,9 +176,9 @@ The *Communication log* tab shows every command and reply.
 
 ```sh
 python -m venv .venv && .venv/bin/pip install pyserial
-.venv/bin/python -m titrate                  # GUI
+.venv/bin/python -m crosstitrate                  # GUI
 .venv/bin/python -m unittest discover tests  # tests (use the simulator)
-python -m titrate.simserve                   # simulated Titrino on a virtual serial port
+python -m crosstitrate.simserve                   # simulated Titrino on a virtual serial port
 ```
 
 Code layout: `protocol.py` (Titrino command language), `transport.py` (serial/simulator
