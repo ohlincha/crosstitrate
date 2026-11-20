@@ -45,7 +45,14 @@ jobs:
 
   macos:
     needs: test
-    runs-on: macos-latest
+    strategy:
+      matrix:
+        include:
+          - { runner: macos-latest, arch: AppleSilicon }
+          - { runner: macos-15-intel, arch: Intel }
+    runs-on: ${{ matrix.runner }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -55,9 +62,9 @@ jobs:
           pyinstaller --noconfirm --windowed --name CrossTitrate --collect-submodules serial \
             --osx-bundle-identifier io.github.ohlincha.crosstitrate crosstitrate_app.py
           mkdir -p dmg && cp -R dist/CrossTitrate.app dmg/ && ln -s /Applications dmg/Applications
-          hdiutil create -volname CrossTitrate -srcfolder dmg -ov -format UDZO dist/CrossTitrate-macOS.dmg
+          hdiutil create -volname CrossTitrate -srcfolder dmg -ov -format UDZO dist/CrossTitrate-macOS-${{ matrix.arch }}.dmg
       - uses: actions/upload-artifact@v4
-        with: { name: macos-dmg, path: dist/CrossTitrate-macOS.dmg }
+        with: { name: macos-dmg-${{ matrix.arch }}, path: dist/CrossTitrate-macOS-${{ matrix.arch }}.dmg }
 
   release:
     # Publish whatever built, even if one platform failed (e.g. no macOS runner available).

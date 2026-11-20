@@ -50,7 +50,7 @@ Download from the [Releases page](https://github.com/ohlincha/crosstitrate/relea
 | System | File | How |
 |---|---|---|
 | Windows | `CrossTitrate.exe` | Run it. If SmartScreen warns, choose *More info → Run anyway*. |
-| macOS | `CrossTitrate-macOS.dmg` | Drag *CrossTitrate* to Applications. The first time, right-click → *Open*. |
+| macOS | `CrossTitrate-macOS-AppleSilicon.dmg` (M1/M2/…) or `CrossTitrate-macOS-Intel.dmg` | Drag *CrossTitrate* to Applications. The first time, right-click → *Open*. |
 | Linux (Debian/Ubuntu) | `crosstitrate_<version>_all.deb` | `sudo apt install ./crosstitrate_*_all.deb`, then `sudo usermod -aG dialout $USER` and log out and in again. |
 
 From source, on any OS, with Python ≥ 3.8 and Tk: `pip install pyserial`, then `python -m crosstitrate`.
