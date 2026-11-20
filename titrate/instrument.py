@@ -216,16 +216,37 @@ class Titrino:
         if stop_event is not None and stop_event.is_set():
             self.stop()   # user pressed Stop while dispensing
             time.sleep(0.3)
-        after = self.read_counter()
+        after = self._settled_counter(before, volume, expected, stop_event)
+        stopped = stop_event is not None and stop_event.is_set()
         if before is not None and after is not None and after >= before:
             actual = round(after - before, 4)
-            if abs(actual - volume) > max(0.002, 0.02 * volume):
+            if not stopped and abs(actual - volume) > max(0.002, 0.02 * volume):
                 raise InstrumentError(f"{self.label}: requested {volume:.4f} mL but the counter shows "
                                       f"{actual:.4f} mL dispensed")
         else:
             actual = volume
         self.piston_used = 0.0 if autofill else self.piston_used + actual
         return actual
+
+    def _settled_counter(self, before, volume, expected, stop_event):
+        """Read the volume counter until it reaches the requested volume (or stops moving / times out).
+
+        Seen on a real 785 DMP: right after a dose the status can already say 'stopped' while the
+        counter still lags behind, so a single read can be short."""
+        after = self.read_counter()
+        if before is None or after is None:
+            return after
+        tol = max(0.002, 0.02 * volume)
+        deadline = time.monotonic() + expected * 2 + 10
+        while after - before < volume - tol and time.monotonic() < deadline:
+            if stop_event is not None and stop_event.is_set():
+                break
+            time.sleep(0.5)
+            nxt = self.read_counter()
+            if nxt is None:
+                break
+            after = nxt
+        return after
 
     def fill(self, rate="max.", stop_event=None):
         if self.measuring:

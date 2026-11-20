@@ -139,11 +139,16 @@ model from its program version and adapts to it.
 |---|---|
 | 718 STAT Titrino | Reference model (command set taken from its manual) |
 | 702, 716, 719, 736, 794 | Standard Titrinos |
-| 751 GPD, 785 DMP, 798 MPT, 799 GPT | Also burettes D0/D1/D2 on one instrument |
+| **785 DMP** | **Tested with real hardware** (identify, EMF, dosing, filling) |
+| 751 GPD, 798 MPT, 799 GPT | Also burettes D0/D1/D2 on one instrument |
 | 720, 758, 784, 795 (KF) | No mV measurement; usable as burettes |
 
-**Hardware status:** so far this version has been tested only against the simulator. Please
-report results with real instruments; the model table will mark verified models.
+**Hardware status:** tested with a real 785 DMP Titrino over a USB–RS232 adapter on Linux.
+Other models share the command language but are untested; please report results.
+
+**Cable:** a straight serial cable does **not** work: no reply, no handshake lines, and E42 on
+the Titrino. Use a null-modem cable or adapter (or Metrohm 6.2125.060), and set the Titrino's
+handshake to "none" unless the cable carries all handshake lines.
 
 **USB:** RS232 Titrinos work through any USB–RS232 adapter, on all three systems. The newer
 USB-only instruments (Titrino plus 848/877, Titrando, OMNIS) use proprietary Metrohm
