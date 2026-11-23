@@ -82,4 +82,4 @@ jobs:
           files: out/*
           generate_release_notes: true
           # v0.x = not yet verified on real hardware
-          prerelease: ${{ startsWith(github.ref_name, 'v0.') }}
+          prerelease: false
