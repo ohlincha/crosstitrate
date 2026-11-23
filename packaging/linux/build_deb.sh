@@ -7,6 +7,9 @@ PKG=build/deb/crosstitrate_${VERSION}_all
 rm -rf "$PKG"
 mkdir -p "$PKG/usr/lib/crosstitrate" "$PKG/usr/bin" "$PKG/DEBIAN"
 find crosstitrate -name '*.py' | while read -r f; do install -Dm644 "$f" "$PKG/usr/lib/crosstitrate/$f"; done
+install -Dm644 crosstitrate/gui/icon.png "$PKG/usr/lib/crosstitrate/crosstitrate/gui/icon.png"
+install -Dm644 crosstitrate/gui/icon.png "$PKG/usr/share/icons/hicolor/256x256/apps/crosstitrate.png"
+install -Dm644 packaging/icon.svg "$PKG/usr/share/icons/hicolor/scalable/apps/crosstitrate.svg"
 install -Dm644 packaging/linux/crosstitrate.desktop "$PKG/usr/share/applications/crosstitrate.desktop"
 install -Dm644 LICENSE "$PKG/usr/share/doc/crosstitrate/copyright"
 install -Dm644 README.md "$PKG/usr/share/doc/crosstitrate/README.md"

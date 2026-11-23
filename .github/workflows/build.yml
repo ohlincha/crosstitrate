@@ -39,7 +39,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: pip install pyinstaller pyserial
-      - run: pyinstaller --noconfirm --onefile --windowed --name CrossTitrate --collect-submodules serial crosstitrate_app.py
+      - run: pyinstaller --noconfirm --onefile --windowed --name CrossTitrate --collect-submodules serial --icon packaging/icon.ico --add-data "crosstitrate/gui/icon.png:crosstitrate/gui" crosstitrate_app.py
       - uses: actions/upload-artifact@v4
         with: { name: windows-exe, path: dist/CrossTitrate.exe }
 
@@ -60,7 +60,8 @@ jobs:
       - run: pip install pyinstaller pyserial
       - run: |
           pyinstaller --noconfirm --windowed --name CrossTitrate --collect-submodules serial \
-            --osx-bundle-identifier io.github.ohlincha.crosstitrate crosstitrate_app.py
+            --osx-bundle-identifier io.github.ohlincha.crosstitrate \
+            --icon packaging/icon.icns --add-data "crosstitrate/gui/icon.png:crosstitrate/gui" crosstitrate_app.py
           mkdir -p dmg && cp -R dist/CrossTitrate.app dmg/ && ln -s /Applications dmg/Applications
           hdiutil create -volname CrossTitrate -srcfolder dmg -ov -format UDZO dist/CrossTitrate-macOS-${{ matrix.arch }}.dmg
       - uses: actions/upload-artifact@v4

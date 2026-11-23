@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#26304b"/><stop offset="1" stop-color="#141824"/></linearGradient></defs><rect x="104" y="104" width="816" height="816" rx="180" fill="url(#bg)" stroke="#4a5063" stroke-width="5"/>
+<rect x="466" y="170" width="92" height="330" rx="20" fill="#ffffff"/>
+<rect x="482" y="270" width="60" height="214" rx="10" fill="#f2c94c"/>
+<g stroke="#1b2133" stroke-width="6"><line x1="482" y1="230" x2="520" y2="230"/><line x1="482" y1="300" x2="520" y2="300"/><line x1="482" y1="370" x2="520" y2="370"/><line x1="482" y1="440" x2="520" y2="440"/></g>
+<rect x="430" y="500" width="164" height="34" rx="17" fill="#555c70"/>
+<rect x="497" y="530" width="30" height="50" fill="#ffffff"/>
+<path d="M512,592 C528,616 532,630 512,644 C492,630 496,616 512,592 Z" fill="#f2c94c"/>
+<path d="M468,668 L556,668 L556,735 L702,852 Q716,870 692,870 L332,870 Q308,870 322,852 L468,735 Z" fill="#ffffff"/>
+<path d="M398,790 L626,790 L688,846 L336,846 Z" fill="#e04b3c"/>
+</svg>
