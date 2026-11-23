@@ -51,7 +51,7 @@ Download from the [Releases page](https://github.com/ohlincha/crosstitrate/relea
 |---|---|---|
 | Windows | `CrossTitrate.exe` | Run it. If SmartScreen warns, choose *More info → Run anyway*. |
 | macOS | `CrossTitrate-macOS-AppleSilicon.dmg` (M1/M2/…) or `CrossTitrate-macOS-Intel.dmg` | Drag *CrossTitrate* to Applications. The first time, right-click → *Open*. |
-| Linux (Debian/Ubuntu) | `crosstitrate_<version>_all.deb` | `sudo apt install ./crosstitrate_*_all.deb`, then `sudo usermod -aG dialout $USER` and log out and in again. |
+| Linux (Debian/Ubuntu) | `crosstitrate_<version>_all.deb` | `sudo apt install ./crosstitrate_*_all.deb`. Its udev rule gives the serial ports to whoever is logged in at the computer, so every user can use them without the `dialout` group (replug the adapter once after installing). Over SSH, add the user to `dialout`. |
 
 From source, on any OS, with Python ≥ 3.8 and Tk: `pip install pyserial`, then `python -m crosstitrate`.
 
@@ -167,7 +167,8 @@ Start with *Instruments → Diagnostics…*. Common causes:
   Titrino, or keep *Raise RTS/DTR* ticked and use a fully wired cable.
 - **Garbled data / E36–E37:** baud, parity or data bits differ. The diagnostics scan finds
   the right settings.
-- **Linux "permission denied":** `sudo usermod -aG dialout $USER`, then log in again.
+- **Linux "permission denied":** installed from the .deb, unplug and replug the adapter (or reboot). Over SSH, or
+  without the .deb: `sudo usermod -aG dialout $USER`, then log in again.
 - **Windows, Prolific adapter "code 10":** use an FTDI-based adapter.
 
 The *Communication log* tab shows every command and reply.

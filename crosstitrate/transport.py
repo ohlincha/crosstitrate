@@ -200,8 +200,9 @@ def friendly_serial_error(port, e):
     if "permission" in low or "access is denied" in low or "errno 13" in low:
         import sys
         if sys.platform.startswith("linux"):
-            return (f"Permission denied for {port}. Add yourself to the 'dialout' group:\n"
-                    "    sudo usermod -aG dialout $USER\nthen log out and in again.")
+            return (f"Permission denied for {port}. Install CrossTitrate from the .deb (its udev rule gives the "
+                    "serial ports to whoever is logged in at the computer), or add yourself to the 'dialout' "
+                    "group (needed over SSH):\n    sudo usermod -aG dialout $USER\nthen log out and in again.")
         if "access is denied" in low:
             return f"{port} is in use by another program (close the other program) or access is denied."
         return f"Permission denied for {port}: {msg}"

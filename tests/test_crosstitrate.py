@@ -217,5 +217,36 @@ class MonitorTest(unittest.TestCase):
             self.assertIn("ice forming", [r["note"] for r in rows if r["kind"] == "event"])
 
 
+
+class TestLinuxPermissions(unittest.TestCase):
+    """Serial-port access: dialout, or the udev rule's uaccess for the logged-in user (users A and B alike)."""
+    PORTS = [dict(device="/dev/ttyUSB0"), dict(device="/dev/ttyS0")]
+
+    def check(self, **kw):
+        from crosstitrate.diagnostics import linux_permission_checks
+        return linux_permission_checks(self.PORTS, **kw)
+
+    def test_dialout(self):
+        f = self.check(groups={"dialout"}, root=False, can_open=lambda d: False)
+        self.assertIn("OK", f[0].title)
+
+    def test_uaccess_without_dialout(self):   # the .deb's rule: no group needed at the computer
+        f = self.check(groups={"users"}, root=False, can_open=lambda d: d == "/dev/ttyUSB0")
+        self.assertIn("logged-in user", f[0].title)
+
+    def test_no_access(self):
+        f = self.check(groups={"users"}, root=False, can_open=lambda d: False)
+        self.assertIn("inaccessible", f[0].title)
+        self.assertIn("dialout", f[0].detail)
+
+    def test_no_ports(self):
+        from crosstitrate.diagnostics import linux_permission_checks
+        self.assertEqual(linux_permission_checks([], groups=set(), root=False), [])
+
+    def test_rule_file(self):
+        rule = open(os.path.join(os.path.dirname(__file__), "..", "packaging", "linux", "70-crosstitrate.rules")).read()
+        self.assertIn('TAG+="uaccess"', rule)
+        self.assertIn("ttyUSB", rule)
+
 if __name__ == "__main__":
     unittest.main()

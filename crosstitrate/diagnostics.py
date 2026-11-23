@@ -39,6 +39,32 @@ or any null-modem cable (TxD/RxD crossed, RTS/CTS and DTR/DSR crossed).
 Most PCs need a USB-RS232 adapter; FTDI-based adapters are the most reliable."""
 
 
+def linux_permission_checks(ports, groups=None, root=None, can_open=None):
+    """Serial-port access on Linux: dialout membership, or the ports opened to the local user (udev uaccess)."""
+    try:
+        if groups is None:
+            import grp
+            groups = {grp.getgrgid(g).gr_name for g in os.getgroups()}
+        root = os.geteuid() == 0 if root is None else root
+    except Exception:  # noqa: BLE001
+        return []
+    if can_open is None:
+        def can_open(dev):
+            return os.access(dev, os.R_OK | os.W_OK)
+    if "dialout" in groups or root:
+        return [Finding(OK, "Serial port permissions OK (dialout group)")]
+    if not ports:
+        return []        # nothing to check yet ("No serial ports found" says what to do)
+    usb = [p["device"] for p in ports if not p["device"].startswith("/dev/ttyS")] or [p["device"] for p in ports]
+    if usb and all(can_open(d) for d in usb):
+        return [Finding(OK, "Serial port permissions OK (ports given to the logged-in user)")]
+    return [Finding(WARN, "Serial ports may be inaccessible",
+                    "Install CrossTitrate from the .deb (its udev rule gives serial ports to whoever is logged in "
+                    "at the computer; unplug and replug the adapter afterwards), or add yourself to the 'dialout' "
+                    "group, which is also needed over SSH:\n    sudo usermod -aG dialout $USER\nthen log out and "
+                    "in again.")]
+
+
 def environment_checks():
     out = []
     try:
@@ -47,19 +73,9 @@ def environment_checks():
     except ImportError:
         out.append(Finding(FAIL, "pyserial is missing", "Install it with: pip install pyserial"))
         return out
-    if sys.platform.startswith("linux"):
-        try:
-            import grp
-            groups = {grp.getgrgid(g).gr_name for g in os.getgroups()}
-            if "dialout" not in groups and os.geteuid() != 0:
-                out.append(Finding(WARN, "You are not in the 'dialout' group",
-                                   "Serial ports may be inaccessible. Fix with:\n"
-                                   "    sudo usermod -aG dialout $USER\nthen log out and in again."))
-            else:
-                out.append(Finding(OK, "Serial port permissions (dialout group) OK"))
-        except Exception:  # noqa: BLE001
-            pass
     ports = transport.list_ports()
+    if sys.platform.startswith("linux"):
+        out.extend(linux_permission_checks(ports))
     if not ports:
         out.append(Finding(WARN, "No serial ports found",
                            "Plug in the USB-RS232 adapter. If it still doesn't appear, install its driver "

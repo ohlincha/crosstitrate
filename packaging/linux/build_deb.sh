@@ -11,6 +11,7 @@ install -Dm644 crosstitrate/gui/icon.png "$PKG/usr/lib/crosstitrate/crosstitrate
 install -Dm644 crosstitrate/gui/icon.png "$PKG/usr/share/icons/hicolor/256x256/apps/crosstitrate.png"
 install -Dm644 packaging/icon.svg "$PKG/usr/share/icons/hicolor/scalable/apps/crosstitrate.svg"
 install -Dm644 packaging/linux/crosstitrate.desktop "$PKG/usr/share/applications/crosstitrate.desktop"
+install -Dm644 packaging/linux/70-crosstitrate.rules "$PKG/usr/lib/udev/rules.d/70-crosstitrate.rules"
 install -Dm644 LICENSE "$PKG/usr/share/doc/crosstitrate/copyright"
 install -Dm644 README.md "$PKG/usr/share/doc/crosstitrate/README.md"
 printf '#!/bin/sh\nPYTHONPATH=/usr/lib/crosstitrate exec python3 -m crosstitrate "$@"\n' > "$PKG/usr/bin/crosstitrate"
@@ -28,13 +29,15 @@ Description: Titration control for Metrohm Titrino instruments
  Runs potentiometric titrations with Metrohm Titrinos (718, 751, 785, ...)
  over RS232 or USB-RS232 adapters: live plot, burette changes, data files,
  connection diagnostics and a built-in simulator.
+ Includes a udev rule so every user logged in at the computer can use the
+ serial ports without being in the dialout group.
 CTRL
 cat > "$PKG/DEBIAN/postinst" <<'POST'
 #!/bin/sh
 set -e
-if [ "$1" = configure ]; then
-    echo "crosstitrate: to use serial ports, add your user to the dialout group:"
-    echo "    sudo usermod -aG dialout \$USER   (then log out and in again)"
+if [ "$1" = configure ] && command -v udevadm >/dev/null 2>&1; then
+    udevadm control --reload || true
+    udevadm trigger --subsystem-match=tty --action=change || true
 fi
 POST
 chmod 755 "$PKG/DEBIAN/postinst"

@@ -1,0 +1,4 @@
+# CrossTitrate: serial ports (USB-RS232 adapters of any make, USB CDC-ACM, built-in COM ports) belong to the
+# user logged in at the computer (systemd-logind "uaccess"), so any local user can use them without being in
+# the dialout group. Over SSH, the dialout group is still needed.
+SUBSYSTEM=="tty", KERNEL=="ttyUSB[0-9]*|ttyACM[0-9]*|ttyS[0-9]*", TAG+="uaccess"
