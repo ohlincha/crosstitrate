@@ -14,6 +14,9 @@ install -Dm644 packaging/linux/crosstitrate.desktop "$PKG/usr/share/applications
 install -Dm644 packaging/linux/70-crosstitrate.rules "$PKG/usr/lib/udev/rules.d/70-crosstitrate.rules"
 install -Dm644 LICENSE "$PKG/usr/share/doc/crosstitrate/copyright"
 install -Dm644 README.md "$PKG/usr/share/doc/crosstitrate/README.md"
+# Help > Manual looks for docs/MANUAL.html next to the package
+install -Dm644 docs/MANUAL.html "$PKG/usr/lib/crosstitrate/docs/MANUAL.html"
+install -Dm644 docs/CrossTitrate-Manual.pdf "$PKG/usr/share/doc/crosstitrate/CrossTitrate-Manual.pdf"
 printf '#!/bin/sh\nPYTHONPATH=/usr/lib/crosstitrate exec python3 -m crosstitrate "$@"\n' > "$PKG/usr/bin/crosstitrate"
 chmod 755 "$PKG/usr/bin/crosstitrate"
 cat > "$PKG/DEBIAN/control" <<CTRL

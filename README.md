@@ -3,6 +3,9 @@
 Cross-platform titration software for **Metrohm Titrino** instruments controlled over
 RS232. CrossTitrate runs potentiometric (EMF) titrations, plots them live, and saves the data.
 
+**User manual:** [docs/MANUAL.md](docs/MANUAL.md), printable as
+[PDF](docs/CrossTitrate-Manual.pdf); in the program, *Help → Manual* (F1).
+
 *CrossTitrate is an independent project, not affiliated with or endorsed by Metrohm. Product names
 are used only to describe compatibility.*
 It also includes connection diagnostics and a built-in simulator.
@@ -74,7 +77,7 @@ From source, on any OS, with Python ≥ 3.8 and Tk: `pip install pyserial`, then
 
    Under `>peripheral units`, set *send to* to `IBM`. Leave the instrument idle, at its
    normal display. CrossTitrate selects MEAS mode and dispensing by itself.
-3. **In CrossTitrate:** *Instruments → Connect…*, choose the port, and press **Test connection**.
+3. **In CrossTitrate:** press **Connect…** on the Titration tab, choose the port, and press **Test connection**.
    If it fails, the diagnostics say why and try other settings for you.
 
 Network serial servers (e.g. Moxa NPort) also work: enter `socket://host:port` as the port.
@@ -159,7 +162,7 @@ protocols that are not publicly documented. They are not supported.
 
 ## Troubleshooting
 
-Start with *Instruments → Diagnostics…*. Common causes:
+Start with **Diagnostics…** on the Titration tab. Common causes:
 
 - **No answer:** RS control is OFF; wrong port; straight instead of null-modem cable;
   Titrino busy or showing a question.
@@ -181,6 +184,10 @@ python -m venv .venv && .venv/bin/pip install pyserial
 .venv/bin/python -m unittest discover tests  # tests (use the simulator)
 python -m crosstitrate.simserve                   # simulated Titrino on a virtual serial port
 ```
+
+The user manual is `docs/MANUAL.md`. After editing it, run `tools/manual_pdf.sh` (needs pandoc
+and Chrome/Chromium) to regenerate `docs/MANUAL.html` (shipped with the installers for
+*Help → Manual*) and `docs/CrossTitrate-Manual.pdf`, and commit both.
 
 Code layout: `protocol.py` (Titrino command language), `transport.py` (serial/simulator
 I/O and the traffic log), `instrument.py` (driver), `titration.py` (titration logic and

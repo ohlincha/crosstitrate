@@ -248,5 +248,24 @@ class TestLinuxPermissions(unittest.TestCase):
         self.assertIn('TAG+="uaccess"', rule)
         self.assertIn("ttyUSB", rule)
 
+
+class TestManual(unittest.TestCase):
+    """Help > Manual: the generated HTML is in the repo (packaged by build_deb.sh and PyInstaller)."""
+
+    def test_found_in_checkout(self):
+        from crosstitrate import manual
+        p = manual.find()
+        self.assertIsNotNone(p)
+        self.assertTrue(p.endswith(os.path.join("docs", "MANUAL.html")))
+
+    def test_missing_fails_gracefully(self):
+        from unittest import mock
+        from crosstitrate import manual
+        with mock.patch.object(manual, "candidates", return_value=["/nonexistent/MANUAL.html"]):
+            ok, msg = manual.open_manual()
+        self.assertFalse(ok)
+        self.assertIn("not found", msg)
+
+
 if __name__ == "__main__":
     unittest.main()

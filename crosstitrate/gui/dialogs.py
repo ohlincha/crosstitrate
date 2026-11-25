@@ -73,7 +73,7 @@ def setup_guide_text():
         "============================\n\n"
         + diagnostics.CABLE_HELP + "\n\n" + diagnostics.TITRINO_SETUP + "\n\n"
         "In this program:\n"
-        "  1. Instruments → Add…: choose the serial port, keep 9600 8N1 (matching the Titrino),\n"
+        "  1. Connect… (Titration tab): choose the serial port, keep 9600 8N1 (matching the Titrino),\n"
         "     and press 'Test connection'. The diagnostics explain what is wrong if it fails.\n"
         "  2. Burettes: each burette is driven by a connected instrument. A second burette can be a\n"
         "     second Titrino on another port (or burette D1/D2 on multi-burette models like the 751).\n"

@@ -9,7 +9,7 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from .. import __version__, datafile, settings, transport
+from .. import __version__, datafile, manual, settings, transport
 from ..instrument import InstrumentError, NoResponse, Titrino
 from ..simulator import Chemistry, Clock, SimulatedTitrino
 from ..titration import COMPONENTS, LIVE_FIELDS, Burette, Controller, Method, Sample
@@ -74,8 +74,30 @@ class App(ttk.Frame):
         self._build_method(left)
         self._build_run(right)
         self._build_front(front)
+        self._build_menu()
         self.status_var = tk.StringVar(value="Ready.")
         ttk.Label(self, textvariable=self.status_var, anchor="w", padding=(8, 2)).pack(fill="x", side="bottom")
+
+    def _build_menu(self):
+        menubar = tk.Menu(self.root)
+        helpm = tk.Menu(menubar, tearoff=False)
+        helpm.add_command(label="Manual", command=self.show_manual, accelerator="F1")
+        helpm.add_command(label="Setup guide", command=lambda: dialogs.TextDialog(
+            self.root, "Setup guide", dialogs.setup_guide_text()).show())
+        helpm.add_separator()
+        helpm.add_command(label="About CrossTitrate", command=lambda: messagebox.showinfo(
+            "About CrossTitrate", f"CrossTitrate {__version__}\n\nTitration control for Metrohm Titrino "
+            "instruments over RS232.\nMIT license.\nhttps://github.com/ohlincha/crosstitrate"))
+        menubar.add_cascade(label="Help", menu=helpm)
+        self.root.config(menu=menubar)
+        self.root.bind("<F1>", lambda e: self.show_manual())
+
+    def show_manual(self):
+        ok, msg = manual.open_manual()
+        if ok:
+            self.status(f"Manual opened in the web browser: {msg}")
+        else:
+            messagebox.showwarning("Manual", msg)
 
     def _build_front(self, tab):
         self.inst_tree = ttk.Treeview(tab, columns=("port", "model", "status"), height=3, selectmode="browse")
@@ -650,7 +672,7 @@ class App(ttk.Frame):
         name = self.meas_var.get()
         if name not in self.ctl.instruments:
             messagebox.showerror("Not connected", "Connect the measuring instrument first "
-                                                  "(Instruments tab).")
+                                                  "(Connect… on the Titration tab).")
             return None
         return name
 
