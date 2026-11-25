@@ -154,7 +154,7 @@ class Plot(tk.Canvas):
         super().__init__(master, background="white", highlightthickness=0, **kw)
         self.xlabel, self.ylabel = xlabel, ylabel
         self.series = {}     # name -> dict(points, color, line, dot)
-        self.markers = []    # x positions of vertical dashed lines (with labels)
+        self.markers = []    # vertical dashed lines: (x, label) or (x, label, color)
         self.bind("<Configure>", lambda e: self.redraw())
         self._pending = False
 
@@ -209,10 +209,13 @@ class Plot(tk.Canvas):
         self.create_rectangle(x0, y0, x1, y1, outline="#999")
         self.create_text((x0 + x1) / 2, h - 4, text=self.xlabel, anchor="s", fill=text, font=font)
         self.create_text(12, (y0 + y1) / 2, text=self.ylabel, angle=90, fill=text, font=font)
-        for xm, label in self.markers:
+        for i, mk in enumerate(self.markers):
+            xm, label = mk[0], mk[1]
+            color = mk[2] if len(mk) > 2 else "#d08000"
             x = tx(xm)
-            self.create_line(x, y0, x, y1, fill="#d08000", dash=(4, 3))
-            self.create_text(x + 3, y0 + 2, text=label, anchor="nw", fill="#d08000", font=font)
+            self.create_line(x, y0, x, y1, fill=color, dash=(4, 3))
+            self.create_text(x + 3, y0 + 2 + 12 * (len(mk) > 2 and i % 2), text=label, anchor="nw", fill=color,
+                             font=font)
         if not pts:
             self.create_text((x0 + x1) / 2, (y0 + y1) / 2, text="no data yet", fill="#999")
             return

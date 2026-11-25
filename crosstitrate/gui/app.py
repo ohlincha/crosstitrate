@@ -9,12 +9,34 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from .. import __version__, datafile, manual, settings, transport
+from .. import __version__, datafile, evaluate, manual, settings, transport
 from ..instrument import InstrumentError, NoResponse, Titrino
-from ..simulator import Chemistry, Clock, SimulatedTitrino
+from ..simulator import DEFAULT_PRESET, PRESETS, Clock, SimulatedTitrino, chemistry_from_parts, preset_parts
 from ..titration import COMPONENTS, LIVE_FIELDS, Burette, Controller, Method, Sample
 from . import dialogs
-from .widgets import Form, FormError, Plot, autosize_columns
+from .widgets import Form, FormError, Plot, Tooltip, autosize_columns
+
+
+class PairForm:
+    """Two Forms side by side (fields alternate left/right) that act as one."""
+
+    def __init__(self, parent):
+        self.forms = [Form(parent, label_width=14), Form(parent, label_width=11)]
+        for i, f in enumerate(self.forms):
+            f.frame.grid(row=0, column=i, sticky="nw", padx=(0, 6))
+        self.vars, self.owner = {}, {}
+
+    def add(self, key, *a, **kw):
+        f = self.forms[len(self.vars) % 2]
+        w = f.add(key, *a, **kw)
+        self.vars[key], self.owner[key] = f.vars[key], f
+        return w
+
+    def get(self, key):
+        return self.owner[key].get(key)
+
+    def set(self, key, value):
+        self.owner[key].set(key, value)
 
 STATUS_COLORS = {"connected": "#1a7f37", "no answer": "#cf222e", "error": "#cf222e", "connecting…": "#9a6700"}
 
@@ -29,7 +51,16 @@ class App(ttk.Frame):
         self.inst_cfg = dict(self.cfg.get("instruments", {}))     # name -> {port, settings, speed}
         self.inst_status = {}
         self.sims = {}
-        self.sim_chem = Chemistry()
+        demo = self.cfg.get("demo") or {}
+        if demo.get("preset") not in PRESETS or not demo.get("parts"):
+            demo = {"preset": DEFAULT_PRESET, "parts": preset_parts(DEFAULT_PRESET)}
+        self.demo = demo                 # simulator demo sample: preset name + editable parts
+        self.sim_chem = chemistry_from_parts(demo["parts"])
+        self.evaluation = None           # evaluate.Evaluation of the curve shown
+        self.eval_source = ""            # data file the evaluation belongs to
+        self.bj_points, self.bj_pkas = [], []
+        self.titrant_signed = None       # mol/L, + acid / - base, of the curve shown
+        self.eval_v0, self.eval_temp = None, 25.0   # sample volume / temperature of the curve shown
         self.components = list(self.cfg.get("components", COMPONENTS))
         self.burettes = [Burette.from_dict(b) for b in self.cfg.get("burettes", [])] or [
             Burette("Burette 1", "", concentrations={c: 0.0 for c in COMPONENTS})]
@@ -236,8 +267,112 @@ class App(ttk.Frame):
         for c in COMPONENTS:
             f.add("c_" + c, f"{c}₀", float, "mM")
         ttk.Label(tab, text="Comment:").pack(anchor="w", pady=(8, 0))
-        self.comment = tk.Text(tab, height=5, width=40, wrap="word")
+        self.comment = tk.Text(tab, height=4, width=40, wrap="word")
         self.comment.pack(fill="x")
+        self._build_demo(tab)
+
+    # ---------------------------------------------------------- demo sample (simulator)
+    def _build_demo(self, tab):
+        box = ttk.LabelFrame(tab, text="Demo sample (simulator only)", padding=6)
+        box.pack(fill="x", pady=(10, 0))
+        top = ttk.Frame(box)
+        top.pack(fill="x")
+        ttk.Label(top, text="Sample").pack(side="left")
+        self.demo_var = tk.StringVar(value=self.demo["preset"])
+        cb = ttk.Combobox(top, textvariable=self.demo_var, values=list(PRESETS), state="readonly", width=34)
+        cb.pack(side="left", padx=4)
+        cb.bind("<<ComboboxSelected>>", lambda e: self._demo_preset_changed())
+        self.demo_rows = ttk.Frame(box)
+        self.demo_rows.pack(fill="x", pady=(4, 0))
+        self.demo_titrant_var = tk.StringVar()
+        row = ttk.Frame(box)
+        row.pack(fill="x", pady=(4, 0))
+        ttk.Label(row, textvariable=self.demo_titrant_var, wraplength=440, justify="left").pack(anchor="w")
+        ttk.Button(row, text="Set burette to match", command=self.demo_set_burette).pack(anchor="w", pady=(2, 0))
+        ttk.Label(box, foreground="#777", wraplength=440, justify="left", text=(
+            "Used when the Simulator is connected; V₀ and temperature are taken from above. pKa values at "
+            "25 °C from the literature; edit them (comma-separated) to try other acids.")).pack(anchor="w",
+                                                                                              pady=(4, 0))
+        self._demo_rows()
+
+    def _demo_preset_changed(self):
+        name = self.demo_var.get()
+        self.demo = {"preset": name, "parts": preset_parts(name)}
+        self._demo_rows()
+        self.save_settings()
+
+    def _demo_rows(self):
+        for w in self.demo_rows.winfo_children():
+            w.destroy()
+        self.demo_vars = []
+        ttk.Label(self.demo_rows, text="Component", foreground="#555").grid(row=0, column=0, sticky="w")
+        ttk.Label(self.demo_rows, text="c (mM)", foreground="#555").grid(row=0, column=1, sticky="w", padx=4)
+        ttk.Label(self.demo_rows, text="pKa", foreground="#555").grid(row=0, column=2, sticky="w")
+        for i, p in enumerate(self.demo["parts"], 1):
+            ttk.Label(self.demo_rows, text=f"{p['name']} ({p['kind']})" if p["kind"] != "weak" else p["name"],
+                      width=22).grid(row=i, column=0, sticky="w")
+            cv = tk.StringVar(value=f"{p['conc_mm']:g}")
+            ttk.Entry(self.demo_rows, textvariable=cv, width=8).grid(row=i, column=1, sticky="w", padx=4)
+            kv = tk.StringVar(value=", ".join(f"{k:g}" for k in p.get("pkas", [])))
+            e = ttk.Entry(self.demo_rows, textvariable=kv, width=18)
+            e.grid(row=i, column=2, sticky="w")
+            if p["kind"] != "weak":
+                e.state(["disabled"])
+            self.demo_vars.append((cv, kv))
+        self._demo_titrant_text()
+
+    def read_demo(self):
+        """The demo parts with the edited concentrations and pKa values (raises FormError)."""
+        parts = preset_parts(self.demo["preset"])
+        for p, (cv, kv) in zip(parts, getattr(self, "demo_vars", [])):
+            try:
+                p["conc_mm"] = float(cv.get().replace(",", ".").strip())
+                if p["conc_mm"] < 0:
+                    raise ValueError
+                if p["kind"] == "weak":
+                    pk = sorted(float(x) for x in kv.get().replace(";", ",").split(",") if x.strip())
+                    if len(pk) != len(p["pkas"]):
+                        raise FormError(f"Demo sample: {p['name']} needs {len(p['pkas'])} pKa value(s)")
+                    p["pkas"] = pk
+            except ValueError:
+                raise FormError(f"Demo sample: check the concentration / pKa of {p['name']}") from None
+        self.demo = {"preset": self.demo["preset"], "parts": parts}
+        return parts
+
+    def demo_titrant(self):
+        """'NaOH' or 'HCl': what the demo sample is titrated with."""
+        return PRESETS[self.demo["preset"]]["titrant"]
+
+    def _demo_mismatched(self):
+        """Active burettes whose titrant does not suit the demo sample (component H: - base, + acid)."""
+        want_base = self.demo_titrant() == "NaOH"
+        bad = []
+        for i in self.active:
+            h = self.burettes[i].concentrations.get("H", 0) or 0
+            if h == 0 or (h < 0) != want_base:
+                bad.append(i)
+        return bad
+
+    def _demo_titrant_text(self):
+        t = self.demo_titrant()
+        kind = "strong base" if t == "NaOH" else "strong acid"
+        ok = not self._demo_mismatched()
+        self.demo_titrant_var.set(f"Titrate with {t} ({kind}): burette component H = "
+                                  f"{'−' if t == 'NaOH' else '+'}100 mM for 0.1 M. "
+                                  + ("Active burette matches ✔" if ok else "Active burette does not match ✘"))
+
+    def demo_set_burette(self, quiet=False):
+        """Give the active burette(s) the titrant the demo sample expects (keeps the strength)."""
+        t = self.demo_titrant()
+        for i in self._demo_mismatched():
+            b = self.burettes[i]
+            mag = abs(b.concentrations.get("H", 0) or 0) or 100.0
+            b.concentrations["H"] = -mag if t == "NaOH" else mag
+            b.name = f"{t} {mag / 1000:g} M"
+        self.refresh_burettes()
+        self.save_settings()
+        if not quiet:
+            self.status(f"Active burette set to {t} (component H on the Burettes tab).")
 
     def _build_method(self, nb):
         tab = ttk.Frame(nb, padding=8)
@@ -369,12 +504,24 @@ class App(ttk.Frame):
                                  self.btn_change, self.btn_save_table)):
             btn.grid(row=1, column=i, sticky="ew", padx=2, pady=(6, 0))
 
+        pm = ttk.Frame(parent)
+        pm.pack(fill="x", pady=(2, 0))
+        ttk.Label(pm, text="Plot:").pack(side="left")
+        self.plot_mode = tk.StringVar(value="Titration curve")
+        pcb = ttk.Combobox(pm, textvariable=self.plot_mode, state="readonly", width=26,
+                           values=["Titration curve", "Bjerrum plot (Z̄ vs pH)"])
+        pcb.pack(side="left", padx=4)
+        pcb.bind("<<ComboboxSelected>>", lambda e: self.redraw_plot())
+        self.ep_note = tk.StringVar(value="")
+        ttk.Label(pm, textvariable=self.ep_note, foreground="#b42318").pack(side="left", padx=8)
+
         pv = ttk.PanedWindow(parent, orient="vertical")
         pv.pack(fill="both", expand=True)
         self.plot = Plot(pv, xlabel="Volume added (mL)", ylabel="EMF (mV)", height=330)
         pv.add(self.plot, weight=3)
         nb = ttk.Notebook(pv)
         pv.add(nb, weight=2)
+        self.bottom_nb = nb
         dataf = ttk.Frame(nb)
         nb.add(dataf, text="Data")
         cols = ("time", "seg", "kind", "vtot", "vseg", "emf", "temp", "drift")
@@ -389,9 +536,76 @@ class App(ttk.Frame):
         self.data_tree.config(yscrollcommand=sb.set)
         self.data_tree.pack(side="left", fill="both", expand=True)
         sb.pack(side="left", fill="y")
+        self._build_results(nb)
         self.msg_text = self._text_tab(nb, "Messages")
         self.log_text = self._text_tab(nb, "Communication log", mono=True)
         self.msg_text.tag_config("error", foreground="#cf222e")
+
+    def _build_results(self, nb):
+        tab = ttk.Frame(nb, padding=4)
+        nb.add(tab, text="Results")
+        self.results_tab = tab
+        btns = ttk.Frame(tab)
+        btns.pack(side="right", anchor="n", padx=(6, 0))
+        ttk.Button(btns, text="Evaluate again", command=self.reevaluate).pack(fill="x")
+        ttk.Button(btns, text="Copy results", command=self.copy_results).pack(fill="x", pady=4)
+        left = ttk.Frame(tab)
+        left.pack(side="left", fill="both", expand=True)
+        cols = ("ep", "veq", "eeq", "dedv", "vinfl", "dv", "cstep", "ccum")
+        self.res_tree = ttk.Treeview(left, columns=cols, show="headings", height=3)
+        for c, label, w in (("ep", "EP", 32), ("veq", "V_eq (mL)", 72), ("eeq", "E (mV)", 60),
+                            ("dedv", "|dE/dV|", 62), ("vinfl", "V infl. (mL)", 80),
+                            ("dv", "ΔV (mL)", 64), ("cstep", "c from ΔV (M)", 95),
+                            ("ccum", "c from V_eq (M)", 105)):
+            self.res_tree.heading(c, text=label)
+            self.res_tree.column(c, width=w, anchor="e")
+        self.res_tree.pack(fill="x")
+        Tooltip(self.res_tree, "|dE/dV| in mV/mL at the equivalence point. V infl.: inflection point (second "
+                               "derivative = 0), a cross-check. c (ΔV) = c_titrant·(V_eq,k − V_eq,k−1)/V₀; "
+                               "c (V_eq) = c_titrant·V_eq,k/V₀; both assume 1:1 per equivalence point.")
+        self.res_info = tk.StringVar(value="Equivalence points appear here during and after a titration.")
+        ttk.Label(left, textvariable=self.res_info, wraplength=620, justify="left", foreground="#444").pack(
+            anchor="w", pady=(4, 0))
+
+        bj = ttk.Frame(nb, padding=4)
+        nb.add(bj, text="Bjerrum")
+        grid = ttk.Frame(bj)
+        grid.pack(side="left", anchor="n")
+        f = PairForm(grid)
+        self.bjform = f
+        f.add("c_analyte_mm", "Analyte c", float, "mM", width=7, optional=True,
+              tip="Total concentration of the titrated acid/base in the sample (before titrant). From your "
+                  "sample preparation, or press 'c from EP'.")
+        f.add("n_protons", "Protons N", int, "", width=6,
+              tip="Protons of the fully protonated form: H3PO4 3, H2CO3 2, acetic acid 1, NH4+ 1.")
+        f.add("bound_as_added", "Bound as added", int, "", width=7,
+              tip="Protons bound on the form put into the sample: H3PO4 3, acetic acid 1, Na2CO3 0, NH3 0.")
+        f.add("strong_acid_mm", "Strong acid", float, "mM", width=7,
+              tip="E.g. HCl in an HCl + acetic acid mixture; negative for NaOH.")
+        f.add("e0_mv", "E0 (pH 0)", float, "mV", width=7,
+              tip="Calibration E = E0 − slope·pH. The simulator uses 400 mV and 59.16 mV/pH.")
+        f.add("slope_mv", "Slope 25 °C", float, "mV/pH", width=6,
+              tip="Electrode slope at 25 °C (59.16 mV/pH ideal); scaled to the sample temperature.")
+        vals = dict(c_analyte_mm=None, n_protons=1, bound_as_added=1, strong_acid_mm=0.0, e0_mv=400.0,
+                    slope_mv=59.16)
+        vals.update(self.cfg.get("bjerrum") or {})
+        for k, v in vals.items():
+            if k in f.vars:
+                f.set(k, v)
+        side = ttk.Frame(bj)
+        side.pack(side="left", fill="both", expand=True, padx=(10, 0))
+        b2 = ttk.Frame(side)
+        b2.pack(anchor="w")
+        for i, (text, cmd) in enumerate((("Plot", self.bj_show), ("Save CSV…", self.save_bjerrum),
+                                         ("From demo sample", self.bj_from_demo), ("c from EP", self.bj_from_ep))):
+            ttk.Button(b2, text=text, command=cmd).grid(row=i // 2, column=i % 2, sticky="ew", padx=2, pady=1)
+        self.bj_info = tk.StringVar(value="Needs a pH-calibrated electrode and the analyte concentration.")
+        ttk.Label(side, textvariable=self.bj_info, wraplength=300, justify="left", foreground="#444").pack(
+            anchor="w", pady=(4, 0))
+        ttk.Label(grid, wraplength=420, justify="left", foreground="#777", text=(
+            "Z̄ = protons bound per molecule of the titrated acid/base, from the proton balance. pKa where Z̄ "
+            "crosses N − ½, N − 3/2, … Choose 'Bjerrum plot' above the plot to see the curve.")).grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
     def _text_tab(self, nb, title, mono=False):
         f = ttk.Frame(nb)
@@ -438,10 +652,14 @@ class App(ttk.Frame):
             self.sample, self.method = self.read_forms()
         except FormError:
             pass
+        try:
+            self.read_demo()
+        except FormError:
+            pass
         self.cfg.update(instruments=self.inst_cfg, burettes=[b.to_dict() for b in self.burettes],
                         active=self.active, method=self.method.to_dict(),
                         sample=dataclasses.asdict(self.sample), meas_key=self.meas_var.get(),
-                        components=self.components,
+                        components=self.components, demo=self.demo, bjerrum=self._bj_form_values(),
                         data_dir=os.path.dirname(self.file_var.get()))
         try:
             settings.save(self.cfg)
@@ -618,6 +836,8 @@ class App(ttk.Frame):
                 "✔" if i in self.active else "", b.device, f"{b.rate:g}",
                 *[f"{b.concentrations.get(c, 0):g}" for c in COMPONENTS], f"{b.ratio:g}"))
         autosize_columns(self.bur_tree)
+        if hasattr(self, "demo_titrant_var"):
+            self._demo_titrant_text()
         names = [b.name for b in self.burettes]
         self.man_bur_box["values"] = names
         if self.man_bur.get() not in names and names:
@@ -734,6 +954,9 @@ class App(ttk.Frame):
         self.data_tree.delete(*self.data_tree.get_children())
         self.x_mode = x_mode
         self.plot.xlabel = "Time (min)" if x_mode == "time" else "Volume added (mL)"
+        if x_mode == "time":
+            self.plot_mode.set("Titration curve")
+        self.show_evaluation(None)
 
     def _manual_burette(self):
         names = [b.name for b in self.burettes]
@@ -812,6 +1035,22 @@ class App(ttk.Frame):
             return None
         if os.path.exists(path) and not messagebox.askyesno("Overwrite?", f"{path}\nexists. Overwrite it?"):
             return None
+        if meas in self.sims:
+            try:
+                self.read_demo()
+            except FormError as e:
+                messagebox.showerror("Cannot start", str(e))
+                return None
+            if self._demo_mismatched():
+                t = self.demo_titrant()
+                r = messagebox.askyesnocancel(
+                    "Demo sample", f"The demo sample '{self.demo['preset']}' is titrated with {t}, but the active "
+                                   f"burette does not contain {t} (component H: negative = base, positive = "
+                                   f"acid).\n\nSet the burette to {t} and start?\n(No = start anyway)")
+                if r is None:
+                    return None
+                if r:
+                    self.demo_set_burette(quiet=True)
         self.sample, self.method = sample, method
         self.save_settings()
         self._prepare_simulation(sample)
@@ -820,11 +1059,11 @@ class App(ttk.Frame):
     def _prepare_simulation(self, sample):
         if not self.sims:
             return
-        chem = Chemistry(v0=sample.v0_ml, strong_acid=max(0.0, sample.concentrations.get("H", 0)) / 1000,
-                         weak_acid=max(0.0, sample.concentrations.get("B", 0)) / 1000,
-                         temp=sample.temperature_c)
-        if chem.strong_acid == 0 and chem.weak_acid == 0:
-            chem.strong_acid = 0.01   # something to titrate in the demo
+        try:
+            parts = self.read_demo()
+        except FormError:
+            parts = self.demo["parts"]
+        chem = chemistry_from_parts(parts, v0=sample.v0_ml, temp=sample.temperature_c)
         self.sim_chem = chem
         for name, sim in self.sims.items():
             sim.chem = chem
@@ -841,6 +1080,15 @@ class App(ttk.Frame):
         self.manual_volume = 0.0
         self.info_vars["step"].set(f"{method.volume_step_ml:g} mL")
         extra = {"note": "Created with CrossTitrate; see the README for the file format."}
+        if meas in self.sims:
+            extra["simulated_sample"] = {"preset": self.demo["preset"], "parts": self.demo["parts"],
+                                         "note": "SIMULATED DATA (built-in simulator), not a measurement"}
+        self.titrant_signed = evaluate.titrant_signed([self.burettes[i].to_dict() for i in self.active])
+        self.eval_source = path
+        self.eval_v0, self.eval_temp = sample.v0_ml, sample.temperature_c
+        self.show_evaluation(None)
+        if meas in self.sims:
+            self.bj_from_demo(quiet=True)   # the simulator's electrode: E0 400 mV, 59.16 mV/pH
         if self.ctl.run_titration(sample, method, self.burettes, self.active, path, meas, extra, start_at):
             self.titrating = True
             self.current_path = path
@@ -954,6 +1202,21 @@ class App(ttk.Frame):
             self._add_row(r["timestamp"][11:19], int(r["segment"] or 0), r["kind"], num(r["v_total_ml"]) or 0,
                           num(r["v_segment_ml"]) or 0, float(r["emf_mv"]), num(r["temperature_c"]),
                           num(r["drift_mv"]), x=elapsed_min if monitor else None)
+        self.eval_source = p
+        if not monitor:
+            smp = meta.get("sample") if isinstance(meta.get("sample"), dict) else {}
+            self.eval_v0, self.eval_temp = smp.get("v0_ml"), smp.get("temperature_c") or 25.0
+            self.titrant_signed = evaluate.titrant_signed(meta.get("active_burettes"))
+            saved = meta.get("results")
+            if isinstance(saved, dict):
+                ev = evaluate.Evaluation.from_dict(saved)
+                ev.notes.append("Results as saved in the data file.")
+            else:
+                ev = evaluate.evaluate_datafile(meta, rows)
+                ev.notes.append("Evaluated on opening (no results saved in the file).")
+            self.show_evaluation(ev)
+            if ev.points:
+                self.bottom_nb.select(self.results_tab)
         self.redraw_plot()
         self.status(f"Loaded {p} ({len(rows)} rows).")
 
@@ -985,11 +1248,194 @@ class App(ttk.Frame):
         self.data_tree.yview_moveto(1.0)
 
     def redraw_plot(self):
+        self.plot.series.clear()
+        if self.plot_mode.get().startswith("Bjerrum"):
+            self.plot.xlabel, self.plot.ylabel = "pH", "Z̄ (protons bound per molecule)"
+            self.plot.markers = [(pk, f"pKa{i} {pk:.2f}", "#b42318") for i, pk in self.bj_pkas if pk is not None]
+            self.plot.set_series("bjerrum", sorted((ph, z) for _, _, ph, z in self.bj_points),
+                                 color="#1f6fd1", line=True, dot=3)
+            return
+        self.plot.xlabel = "Time (min)" if self.x_mode == "time" else "Volume added (mL)"
+        self.plot.ylabel = "EMF (mV)"
         eq = [(v, e) for v, e, k, s in self.readings if k in ("eq", "manual", "monitor")]
         dr = [(v, e) for v, e, k, s in self.readings if k == "drift"]
-        self.plot.markers = list(self.markers)
+        eps = self.evaluation.points if (self.evaluation and self.x_mode == "volume") else []
+        self.plot.markers = list(self.markers) + [(p.v_eq_ml, f"EP{p.n}", "#b42318") for p in eps]
         self.plot.set_series("drift", dr, color="#bbbbbb", line=False, dot=2)
         self.plot.set_series("eq", eq, color="#1f6fd1", line=True, dot=3)
+        self.plot.set_series("ep", [(p.v_eq_ml, p.e_eq_mv) for p in eps], color="#b42318", line=False, dot=5)
+
+    # =============================================================== evaluation
+    def _curve(self):
+        pts = [(v, e) for v, e, k, s in self.readings if k == "eq"]
+        return [v for v, _ in pts], [e for _, e in pts]
+
+    def evaluate_live(self):
+        """Evaluate the accepted points shown (during a titration and after opening a file)."""
+        if self.x_mode != "volume":
+            return
+        v, e = self._curve()
+        c = abs(self.titrant_signed) if self.titrant_signed else None
+        desc = "" if not self.titrant_signed else \
+            f"{'base' if self.titrant_signed < 0 else 'acid'} {c:.4g} mol/L"
+        self.show_evaluation(evaluate.evaluate(v, e, c, self.eval_v0, desc))
+
+    def reevaluate(self):
+        self.evaluate_live()
+        self.bottom_nb.select(self.results_tab)
+
+    def show_evaluation(self, ev):
+        self.evaluation = ev
+        self.res_tree.delete(*self.res_tree.get_children())
+        fmt = lambda x, f: "—" if x is None else format(x, f)
+        for p in ev.points if ev else []:
+            self.res_tree.insert("", "end", values=(p.n, fmt(p.v_eq_ml, ".4f"), fmt(p.e_eq_mv, ".1f"),
+                                                    fmt(p.dedv_max, ".1f"), fmt(p.v_inflection_ml, ".4f"),
+                                                    fmt(p.dv_ml, ".4f"), fmt(p.c_step_mol_l, ".5f"),
+                                                    fmt(p.c_cum_mol_l, ".5f")))
+        if ev is None:
+            self.res_info.set("")
+            self.ep_note.set("")
+        else:
+            info = [f"Titrant: {ev.titrant or 'unknown'}; V₀ = {fmt(ev.v0_ml, 'g')} mL; {ev.n_points} points. "
+                    f"Stoichiometry assumed: {ev.stoichiometry}. c from ΔV = c_titrant·(V_eq,k − V_eq,k−1)/V₀; "
+                    f"c from V_eq = c_titrant·V_eq,k/V₀."] + ev.notes
+            self.res_info.set("\n".join(info))
+            self.ep_note.set("  ".join(f"EP{p.n} {p.v_eq_ml:.3f} mL" for p in ev.points))
+        self.compute_bjerrum(quiet=True)
+        self.redraw_plot()
+
+    def copy_results(self):
+        ev = self.evaluation
+        if not ev:
+            self.status("No results to copy.")
+            return
+        lines = ["\t".join(evaluate.RESULT_COLUMNS[2:-1])]
+        for p in ev.points:
+            lines.append("\t".join("" if x is None else f"{x:.6g}" if isinstance(x, float) else str(x) for x in (
+                p.n, p.v_eq_ml, p.e_eq_mv, p.dedv_max, p.v_inflection_ml, p.dv_ml, ev.titrant,
+                ev.titrant_conc_mol_l, ev.v0_ml, p.c_step_mol_l, p.c_cum_mol_l)))
+        lines += [f"pKa{i} (Bjerrum)\t{pk:.3f}" for i, pk in self.bj_pkas if pk is not None]
+        self.root.clipboard_clear()
+        self.root.clipboard_append("\n".join(lines) + "\n")
+        self.status("Results copied to the clipboard (paste into a spreadsheet).")
+
+    # ---------------------------------------------------------- Bjerrum
+    def _bj_form_values(self):
+        if not hasattr(self, "bjform"):
+            return self.cfg.get("bjerrum")
+        out = {}
+        for k in self.bjform.vars:
+            try:
+                out[k] = self.bjform.get(k)
+            except FormError:
+                pass
+        return out
+
+    def bj_params(self):
+        """BjerrumParams from the form and the curve shown, or a reason why not."""
+        f = self.bjform
+        try:
+            c = f.get("c_analyte_mm")
+            n, n0 = f.get("n_protons"), f.get("bound_as_added")
+            prm = dict(strong_acid_mm=f.get("strong_acid_mm"), e0_mv=f.get("e0_mv"), slope_mv=f.get("slope_mv"))
+        except FormError as e:
+            return None, str(e)
+        if not c or c <= 0:
+            return None, "Enter the analyte's total concentration (or press 'c from EP')."
+        if not 1 <= n <= 6 or not 0 <= n0 <= n:
+            return None, "N must be 1–6 and 'protons as added' between 0 and N."
+        if not self.titrant_signed:
+            return None, "Titrant concentration unknown (component H of the burette)."
+        if not self.eval_v0:
+            return None, "Sample volume V₀ unknown."
+        return evaluate.BjerrumParams(c, n, n0, self.titrant_signed, self.eval_v0, temp_c=self.eval_temp, **prm), ""
+
+    def compute_bjerrum(self, quiet=False):
+        self.bj_points, self.bj_pkas = [], []
+        if self.x_mode != "volume":
+            self.bj_info.set("Bjerrum plot: only for titrations.")
+            return None
+        prm, why = self.bj_params()
+        if prm is None:
+            self.bj_info.set(why + "\nNeeds a pH-calibrated electrode (E0, slope).")
+            return None
+        v, e = self._curve()
+        self.bj_points = evaluate.bjerrum(v, e, prm)
+        self.bj_pkas = evaluate.pka_from_bjerrum(self.bj_points, prm.n_protons)
+        if not self.bj_points:
+            self.bj_info.set("No points yet.")
+            return prm
+        zs = [z for *_, z in self.bj_points]
+        text = ", ".join(f"pKa{i} = {pk:.2f}" if pk is not None else f"pKa{i}: Z̄ = {prm.n_protons - i + 0.5:g} "
+                         "not reached" for i, pk in self.bj_pkas)
+        self.bj_info.set(f"{text}\nZ̄ from {min(zs):.2f} to {max(zs):.2f}. pKa at Z̄ = N − i + ½; "
+                         "valid with a pH-calibrated electrode and pKa values > ~2 apart.")
+        return prm
+
+    def bj_show(self):
+        self.compute_bjerrum()
+        self.plot_mode.set("Bjerrum plot (Z̄ vs pH)")
+        self.redraw_plot()
+        self.save_settings()
+
+    def bj_from_demo(self, quiet=False):
+        try:
+            parts = self.read_demo()
+        except FormError as e:
+            if not quiet:
+                messagebox.showerror("Bjerrum plot", str(e))
+            return
+        weak = [p for p in parts if p["kind"] == "weak"]
+        if not weak:
+            if quiet:
+                return
+            messagebox.showinfo("Bjerrum plot", "This demo sample has no weak acid or base: Z̄ is not defined "
+                                                "(choose e.g. acetic acid, phosphoric acid, carbonate or ammonia).")
+            return
+        w = weak[0]
+        strong = sum(p["conc_mm"] for p in parts if p["kind"] == "strong acid") - \
+            sum(p["conc_mm"] for p in parts if p["kind"] == "strong base")
+        for k, v in (("c_analyte_mm", w["conc_mm"]), ("n_protons", len(w["pkas"])),
+                     ("bound_as_added", w.get("protons", len(w["pkas"]))), ("strong_acid_mm", float(strong)),
+                     ("e0_mv", 400.0), ("slope_mv", 59.16)):
+            self.bjform.set(k, v)
+        self.compute_bjerrum()
+        self.redraw_plot()
+
+    def bj_from_ep(self):
+        ev = self.evaluation
+        if not ev or not ev.points or ev.points[-1].c_step_mol_l is None:
+            messagebox.showinfo("Bjerrum plot", "No equivalence point with a concentration yet.")
+            return
+        c = ev.points[-1].c_step_mol_l * 1000
+        self.bjform.set("c_analyte_mm", round(c, 4))
+        self.status(f"Analyte concentration {c:.4g} mM from ΔV of EP{ev.points[-1].n} (1:1). For a mixture "
+                    "(e.g. HCl + acetic acid) also enter the strong acid from EP1.")
+        self.compute_bjerrum()
+        self.redraw_plot()
+
+    def save_bjerrum(self, path=None):
+        prm = self.compute_bjerrum()
+        if prm is None or not self.bj_points:
+            if path is None:
+                messagebox.showinfo("Bjerrum plot", self.bj_info.get())
+            return None
+        if path is None:
+            src = self.eval_source or self.file_var.get()
+            path = filedialog.asksaveasfilename(title="Save Bjerrum data", defaultextension=".csv",
+                                                initialdir=os.path.dirname(src),
+                                                initialfile=os.path.basename(evaluate.bjerrum_path(src)),
+                                                filetypes=[("CSV files", "*.csv")])
+            if not path:
+                return None
+        try:
+            evaluate.write_bjerrum(path, self.bj_points, self.bj_pkas, prm)
+        except OSError as e:
+            self.message(f"Could not write {path}: {e}", error=True)
+            return None
+        self.message(f"Bjerrum data saved to {path}")
+        return path
 
     # =============================================================== events
     def poll(self):
@@ -1033,7 +1479,10 @@ class App(ttk.Frame):
                           r.v_segment, r.emf, r.temperature, r.drift)
             self.info_vars["vtot"].set(f"{r.v_total:.4f} mL")
             self.info_vars["vseg"].set(f"{r.v_segment:.4f} mL")
-            self.redraw_plot()
+            if r.kind == "eq":
+                self.evaluate_live()      # also redraws
+            else:
+                self.redraw_plot()
         elif kind == "live":
             self.emf_var.set(f"{args[1]:.1f} mV")
             self.emf_note.set(f"live ({args[0]})")
@@ -1082,9 +1531,17 @@ class App(ttk.Frame):
             self.redraw_plot()
         elif kind == "started":
             self.message(f"Titration started, writing {args[0]}")
+        elif kind == "evaluated":
+            ev, rpath = args
+            self.show_evaluation(ev)
+            self.message("Evaluation: " + ev.summary().replace("\n", "; ")
+                         + (f". Results: {rpath}" if rpath else ""))
         elif kind == "finished":
             reason, path = args
             self.message(f"Titration finished: {reason}. Data: {path}")
+            if self.bj_points:
+                self.save_bjerrum(evaluate.bjerrum_path(path))
+            self.bottom_nb.select(self.results_tab)
             self.file_var.set(self.default_file())
             self.manual_volume = self.readings[-1][0] if self.readings else 0.0
             messagebox.showinfo("Titration finished", f"{reason}\n\nData saved to {path}")

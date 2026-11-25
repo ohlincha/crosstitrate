@@ -17,7 +17,7 @@ import time
 import traceback
 from dataclasses import dataclass, field
 
-from . import datafile, __version__
+from . import datafile, evaluate, __version__
 from .instrument import InstrumentError, NoResponse
 from .transport import TransportError
 
@@ -382,6 +382,9 @@ class TitrationJob:
         self.step = method.volume_step_ml
         self.t0 = None
         self.file = None
+        self.evaluation = None
+        self.results_path = None
+        self.initial_active = [burettes[i].to_dict() for i in active]
 
     # ------------------------------------------------------------ helpers
     def emit(self, *a):
@@ -537,6 +540,30 @@ class TitrationJob:
                 self.emit("status", f"Burette changed to {self.active_names()} (segment {self.segment}).")
                 self.emit("segment", self.segment)
 
+    def evaluate(self):
+        """Equivalence points and concentrations from the accepted points; also written to
+        <data file>_results.csv. Returns None if there is nothing to evaluate."""
+        self.results_path = None
+        if len(self.accepted) < 5:
+            return None
+        try:
+            conc, desc = evaluate.titrant_from_burettes(self.initial_active)
+            ev = evaluate.evaluate([r.v_total for r in self.accepted], [r.emf for r in self.accepted],
+                                   conc, self.sample.v0_ml, desc)
+            if len({r.segment for r in self.accepted}) > 1:
+                ev.notes.append("The burette was changed during the titration; the concentration uses the "
+                                "titrant of the first segment.")
+        except Exception as e:  # noqa: BLE001 - never lose the data file because of the evaluation
+            self.emit("error", f"Evaluation failed: {e}")
+            return None
+        path = evaluate.results_path(self.path)
+        try:
+            evaluate.write_results(path, ev, self.path, self.sample.name)
+            self.results_path = path
+        except OSError as e:
+            self.emit("error", f"Could not write {path}: {e}")
+        return ev
+
     # ------------------------------------------------------------ main
     def run(self):
         ctl = self.ctl
@@ -582,6 +609,9 @@ class TitrationJob:
                 self.meas.stop_measuring()
             except Exception:  # noqa: BLE001
                 pass
+            self.evaluation = self.evaluate()
+            if self.evaluation is not None:
+                self.file.comment("results", self.evaluation.to_dict())
             self.file.comment("end", {"time": datafile.iso(time.time()), "reason": reason,
                                       "v_total_ml": round(self.v_total, 4)})
             self.file.close()
@@ -595,4 +625,6 @@ class TitrationJob:
                     ins.fill(stop_event=ctl.stop_event)
                 except (InstrumentError, NoResponse) as e:
                     self.emit("error", f"Filling {b.name} failed: {e}")
+        if self.evaluation is not None:
+            self.emit("evaluated", self.evaluation, self.results_path)
         self.emit("finished", reason, self.path)

@@ -4,8 +4,9 @@ A simulated Metrohm Titrino for testing and demonstration without hardware.
 It understands the same remote-control language as the real instruments
 (including abbreviated object names such as ``&A.B.M.S``), answers $Q and $D,
 reports error codes for invalid commands, and simulates a glass electrode in a
-titration vessel: an acid (strong + optional weak) titrated with base, with a
-first-order electrode response (drift) and measurement noise.
+titration vessel: any mixture of strong and weak (polyprotic) acids and bases,
+titrated with a strong base or strong acid, with the pH from the charge
+balance, a first-order electrode response (drift) and measurement noise.
 """
 
 import math
@@ -92,15 +93,66 @@ def _tree(multi_burette):
     }
 
 
+KW = 1e-14   # ion product of water at 25 °C
+
+
+class Species:
+    """A weak acid/base system in the sample, e.g. acetic acid, phosphate, carbonate, ammonia.
+
+    conc:    total concentration in the sample (mol/L).
+    pkas:    pKa values of the fully protonated form, in increasing order (one per proton).
+    charge:  charge of the fully protonated form (0 for H3PO4, H2CO3, HAc; +1 for NH4+).
+    protons: number of acidic protons on the form that was put into the sample
+             (HAc: 1 of 1; Na2CO3: 0 of 2; NH3: 0 of 1). The counter-ions (Na+, Cl-)
+             needed to make that form neutral are included automatically.
+    """
+
+    def __init__(self, name, conc, pkas, charge=0, protons=None):
+        self.name = name
+        self.conc = float(conc)
+        self.pkas = sorted(float(p) for p in pkas)
+        self.charge = charge
+        self.protons = len(self.pkas) if protons is None else protons
+
+    def mean_charge(self, h):
+        """Mean charge per molecule at [H+] = h (fractions of each protonation state)."""
+        n = len(self.pkas)
+        terms, prod = [], 1.0
+        for i in range(n + 1):           # i protons lost
+            terms.append(h ** (n - i) * prod)
+            if i < n:
+                prod *= 10 ** -self.pkas[i]
+        total = sum(terms)
+        return sum(t * (self.charge - i) for i, t in enumerate(terms)) / total
+
+    def counter_ion_charge(self):
+        """Charge of the counter-ions per molecule (+ = cations such as Na+)."""
+        return -(self.charge - (len(self.pkas) - self.protons))
+
+    def to_dict(self):
+        return dict(name=self.name, conc=self.conc, pkas=self.pkas, charge=self.charge, protons=self.protons)
+
+
 class Chemistry:
-    """Acid titrated with base. Concentrations in mol/L, volumes in mL."""
+    """Sample in the titration vessel, titrated with a strong base or strong acid.
+
+    Concentrations in mol/L, volumes in mL. The pH follows from the charge balance
+    (activities ignored), solved by bisection on log[H+]; the electrode EMF is
+    E = e0 - slope * pH with the Nernst slope at the sample temperature.
+
+    The old signature still works: Chemistry(strong_acid=0.01, weak_acid=0.005, pka=4.76)
+    is HCl + acetic-type acid. Pass `species` (list of Species) for any other sample.
+    """
 
     def __init__(self, v0=50.0, strong_acid=0.01, weak_acid=0.005, pka=4.76, e0=400.0, slope=59.16,
-                 temp=25.0):
+                 temp=25.0, strong_base=0.0, species=None):
         self.v0 = v0
         self.strong_acid = strong_acid
-        self.weak_acid = weak_acid
-        self.pka = pka
+        self.strong_base = strong_base
+        if species is None:
+            species = [Species("weak acid", weak_acid, [pka])] if weak_acid else []
+        self.species = list(species)
+        self.weak_acid = sum(s.conc for s in self.species)
         self.e0 = e0
         self.slope = slope * (273.15 + temp) / 298.15
         self.base_added_mol = 0.0   # mmol actually
@@ -115,20 +167,23 @@ class Chemistry:
         else:
             self.acid_added_mol += v_ml * -conc_base
 
-    def ph(self):
+    def charge_balance(self, h):
+        """Net positive charge (mol/L) at [H+] = h; zero at the real pH, increasing with h."""
         v = self.v0 + self.v_added
-        ca_strong = (self.strong_acid * self.v0 + self.acid_added_mol) / v
-        ca_weak = self.weak_acid * self.v0 / v
-        cb = self.base_added_mol / v
-        ka, kw = 10 ** -self.pka, 1e-14
+        dil = self.v0 / v
+        q = h - KW / h
+        q += (self.strong_base * self.v0 + self.base_added_mol) / v      # Na+
+        q -= (self.strong_acid * self.v0 + self.acid_added_mol) / v      # Cl-
+        for s in self.species:
+            c = s.conc * dil
+            q += c * (s.mean_charge(h) + s.counter_ion_charge())
+        return q
 
-        def charge(h):
-            return h + cb - kw / h - ca_strong - ca_weak * ka / (ka + h)
-
-        lo, hi = -14.5, 0.5  # log10 [H+]
+    def ph(self):
+        lo, hi = -16.0, 1.5  # log10 [H+]
         for _ in range(80):
             mid = (lo + hi) / 2
-            if charge(10 ** mid) > 0:
+            if self.charge_balance(10 ** mid) > 0:
                 hi = mid
             else:
                 lo = mid
@@ -136,6 +191,59 @@ class Chemistry:
 
     def emf(self):
         return self.e0 - self.slope * self.ph()
+
+    def describe(self):
+        parts = []
+        if self.strong_acid:
+            parts.append(f"strong acid {self.strong_acid * 1000:g} mM")
+        if self.strong_base:
+            parts.append(f"strong base {self.strong_base * 1000:g} mM")
+        for s in self.species:
+            parts.append(f"{s.name} {s.conc * 1000:g} mM (pKa {', '.join(f'{p:g}' for p in s.pkas)})")
+        return ", ".join(parts) or "water"
+
+
+# Demo samples for the simulator. Literature pKa values at 25 °C. Concentrations in mM.
+# kind: "strong acid", "strong base" or "weak" (Species with pkas/charge/protons).
+# titrant: what the sample is titrated with ("NaOH" = strong base, "HCl" = strong acid).
+PRESETS = {
+    "HCl": dict(titrant="NaOH", parts=[
+        dict(name="HCl", kind="strong acid", conc_mm=10.0)]),
+    "Acetic acid": dict(titrant="NaOH", parts=[
+        dict(name="acetic acid", kind="weak", conc_mm=10.0, pkas=[4.76], charge=0, protons=1)]),
+    "HCl + acetic acid": dict(titrant="NaOH", parts=[
+        dict(name="HCl", kind="strong acid", conc_mm=5.0),
+        dict(name="acetic acid", kind="weak", conc_mm=5.0, pkas=[4.76], charge=0, protons=1)]),
+    "Phosphoric acid": dict(titrant="NaOH", parts=[
+        dict(name="phosphoric acid", kind="weak", conc_mm=5.0, pkas=[2.15, 7.20, 12.35], charge=0, protons=3)]),
+    "NaOH (titrate with HCl)": dict(titrant="HCl", parts=[
+        dict(name="NaOH", kind="strong base", conc_mm=10.0)]),
+    "Sodium carbonate (titrate with HCl)": dict(titrant="HCl", parts=[
+        dict(name="sodium carbonate", kind="weak", conc_mm=5.0, pkas=[6.35, 10.33], charge=0, protons=0)]),
+    "Ammonia (titrate with HCl)": dict(titrant="HCl", parts=[
+        dict(name="ammonia", kind="weak", conc_mm=10.0, pkas=[9.25], charge=1, protons=0)]),
+}
+DEFAULT_PRESET = "HCl"
+
+
+def preset_parts(name):
+    """A copy of the parts of a preset (to edit concentrations or pKa values)."""
+    import copy
+    return copy.deepcopy(PRESETS[name]["parts"])
+
+
+def chemistry_from_parts(parts, v0=50.0, temp=25.0, e0=400.0, slope=59.16):
+    """Build a Chemistry from preset-style parts (concentrations in mM)."""
+    strong_acid = sum(p["conc_mm"] for p in parts if p["kind"] == "strong acid") / 1000
+    strong_base = sum(p["conc_mm"] for p in parts if p["kind"] == "strong base") / 1000
+    species = [Species(p["name"], p["conc_mm"] / 1000, p["pkas"], p.get("charge", 0), p.get("protons"))
+               for p in parts if p["kind"] == "weak"]
+    return Chemistry(v0=v0, strong_acid=strong_acid, strong_base=strong_base, species=species,
+                     temp=temp, e0=e0, slope=slope)
+
+
+def chemistry_from_preset(name, v0=50.0, temp=25.0, parts=None):
+    return chemistry_from_parts(parts if parts is not None else PRESETS[name]["parts"], v0, temp)
 
 
 class SimulatedTitrino:

@@ -34,12 +34,17 @@ Titrino.
   - Port and permission checks, handshake-line status.
   - Automatic baud and parity scan, instrument identification.
   - A live communication log, and plain-language advice for each problem.
-- **Simulator.** Try everything without an instrument, at up to 300× speed.
+- **Evaluation:** equivalence points (maximum of |dE/dV|, interpolated, with the inflection
+  point as a cross-check), the sample concentration from each one (1:1 per equivalence point),
+  marked in the plot and saved with the data. Bjerrum plot (Z̄ vs pH) with pKa estimates.
+- **Simulator.** Try everything without an instrument, at up to 300× speed, with demo samples:
+  HCl, acetic acid, HCl + acetic acid, phosphoric acid (with NaOH); NaOH, sodium carbonate,
+  ammonia (with HCl). The pH comes from the charge balance with literature pKa values.
 
-![CrossTitrate running a titration (simulated 718 STAT Titrino)](docs/screenshot-titration.png)
+![CrossTitrate after a titration (simulated 718 STAT Titrino)](docs/screenshot-titration.png)
 
-*A titration of a strong + weak acid mixture with NaOH, using the built-in simulator.
-Accepted points are blue; intermediate drift readings are grey.*
+*Phosphoric acid titrated with NaOH, using the built-in simulator. The two equivalence points
+are marked in red and listed with the concentration on the Results tab.*
 
 ![Connection diagnostics](docs/screenshot-diagnostics.png)
 
@@ -131,6 +136,17 @@ instruments and start/end times as JSON. It's followed by one row per reading:
 timestamp,elapsed_s,segment,kind,burettes,v_total_ml,v_segment_ml,emf_mv,temperature_c,drift_mv,note
 ```
 
+At the end of a titration the evaluation is added as a `# results: {…}` line (JSON), and
+`<name>_results.csv` is written next to the data file with one row per equivalence point:
+
+```
+data_file,sample,ep,v_eq_ml,e_eq_mv,dedv_max_mv_per_ml,v_inflection_ml,dv_ml,titrant,c_titrant_mol_l,v0_ml,c_step_mol_l,c_cum_mol_l,stoichiometry
+```
+
+`c_step_mol_l` uses the volume since the previous equivalence point, `c_cum_mol_l` the whole
+volume. With the Bjerrum tab filled in, `<name>_bjerrum.csv` holds `v_total_ml, emf_mv, ph, zbar`.
+See the manual, *Evaluating and reporting results*.
+
 `kind` is `eq` (accepted point), `drift` (intermediate reading), `manual`, `monitor` (EMF
 monitor reading) or `event` (burette change, manual addition, settings change or note; details
 in `note`). `v_total_ml` is cumulative over the whole titration; `v_segment_ml` restarts at
@@ -191,7 +207,9 @@ and Chrome/Chromium) to regenerate `docs/MANUAL.html` (shipped with the installe
 
 Code layout: `protocol.py` (Titrino command language), `transport.py` (serial/simulator
 I/O and the traffic log), `instrument.py` (driver), `titration.py` (titration logic and
-worker thread), `diagnostics.py`, `datafile.py`, `simulator.py`, `gui/`.
+worker thread), `evaluate.py` (equivalence points, concentrations, Bjerrum function; no GUI),
+`diagnostics.py`, `datafile.py`, `simulator.py` (instrument and charge-balance chemistry, demo
+samples), `gui/`.
 
 Pushing a tag `vX.Y.Z` builds the Windows, macOS and Linux installers on GitHub Actions
 and publishes a release.

@@ -115,6 +115,11 @@ class ConnectDialog(Dialog):
               tip="Keeps the RTS and DTR lines on, which the Titrino needs to be allowed to send.")
         f.add("speed", "Simulation speed", str, choices=["1", "10", "60", "300"],
               tip="Only for the simulator: run time faster (e.g. 60 = one minute per second).")
+        self.sim_hint = ttk.Label(f.frame, foreground="#555", wraplength=360, justify="left",
+                                  text="Simulator: choose the demo sample (HCl, acetic acid, phosphoric acid, "
+                                       "carbonate, ammonia, …) on the Sample tab.")
+        self.sim_hint.grid(row=f.row, column=0, columnspan=4, sticky="w", pady=(2, 0))
+        f.row += 1
         self.refresh()
         s = transport.SerialSettings.from_dict(initial.get("settings"))
         f.set("name", initial.get("name") or self._free_name())
@@ -178,6 +183,7 @@ class ConnectDialog(Dialog):
         for k in ("baud", "bytesize", "parity", "stopbits", "handshake", "assert_lines"):
             self.form.enable(k, not sim)
         self.form.enable("speed", sim)
+        self.sim_hint.state(["!disabled"] if sim else ["disabled"])
 
     def port(self):
         p = self.port_var.get().strip()
