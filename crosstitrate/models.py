@@ -27,7 +27,10 @@ class Profile:
 
 
 PROFILES = {p.model: p for p in [
-    Profile("702", "SM Titrino"),
+    Profile("702", "SM Titrino",
+            notes="Used in the lab with WinTitrate, which sends the same commands in short form (&M, &A.B.M.V, "
+                  "&I.A.T.M ...) but never the detailed status $D that CrossTitrate relies on: not yet tried "
+                  "with CrossTitrate."),
     Profile("716", "DMS Titrino"),
     Profile("718", "STAT Titrino", notes="Reference model: command set taken from its manual."),
     Profile("719", "S Titrino"),
