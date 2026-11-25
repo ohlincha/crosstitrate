@@ -269,3 +269,35 @@ class TestManual(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_identify_wakes_an_instrument_that_was_already_on():
+    """A Titrino that was on before the port was opened may miss the first request: identify() wakes it and
+    asks again (user, 2026-11-25: it only connected when switched on after the program)."""
+    from crosstitrate import transport
+    from crosstitrate.instrument import Titrino, NoResponse
+    from crosstitrate.simulator import SimulatedTitrino
+
+    class Sleepy(transport.SimTransport):
+        def __init__(self, sim, missed):
+            super().__init__(sim, "sleepy")
+            self.missed, self.wakes = missed, 0
+
+        def wake(self):
+            self.wakes += 1
+
+        def request(self, line, timeout=1.5):
+            if self.missed > 0:
+                self.missed -= 1
+                return ""
+            return super().request(line, timeout)
+
+    t = Sleepy(SimulatedTitrino(model="718"), missed=1)
+    info = Titrino(t, label="T").identify()
+    assert info["model"] and t.wakes == 2
+    t = Sleepy(SimulatedTitrino(model="718"), missed=5)
+    try:
+        Titrino(t, label="T").identify()
+        assert False, "should give up"
+    except NoResponse:
+        assert t.wakes == 3

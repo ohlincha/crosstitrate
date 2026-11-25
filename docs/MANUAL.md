@@ -178,6 +178,7 @@ instrument, and explains each problem in plain words.
 | Wrong port / don't know the port | Unplug the adapter, press **Refresh**, plug it in, press **Refresh** again: the new entry is the adapter. Or use **Scan all ports**. A *Bluetooth* port is never the Titrino. |
 | No serial ports found | Plug in the adapter. If it still does not appear, install its driver (FTDI or Prolific). |
 | Linux: "permission denied" | Installed from the .deb: unplug and replug the adapter (or reboot). Over SSH or without the .deb: `sudo usermod -aG dialout $USER`, then log in again. |
+| Connects only if the Titrino is switched on *after* CrossTitrate opened the port | Fixed in 0.4.3: CrossTitrate wakes a Titrino that was already on (XON + empty line, up to three tries). If it still happens, press **Test connection** with the Titrino on and send the diagnostics text to the developer. |
 | **E42** on the Titrino display | Handshake problem. Set handshake to *none* on the Titrino, or keep *Raise RTS/DTR* ticked and use a fully wired cable. |
 | Garbled replies / E36–E37 | Baud, parity or data bits differ between Titrino and program. The diagnostics scan finds the right settings. |
 | Windows, Prolific adapter "code 10" | Use an FTDI-based adapter. |

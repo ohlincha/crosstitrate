@@ -83,8 +83,17 @@ class Titrino:
         except NoResponse:
             return False
 
-    def identify(self):
-        st = self.status()
+    def identify(self, attempts=3):
+        # A Titrino that was already on when the port was opened may miss the first request (see
+        # SerialTransport.wake): wake it and ask again before giving up.
+        for i in range(attempts):
+            self.t.wake()
+            try:
+                st = self.status()
+                break
+            except NoResponse:
+                if i == attempts - 1:
+                    raise
         try:
             self.prog = self.query(P.prog)
         except NoResponse:

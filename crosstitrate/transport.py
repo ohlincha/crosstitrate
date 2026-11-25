@@ -112,6 +112,9 @@ class Transport:
                 LOG.add(self.name, "←", text)
             return text
 
+    def wake(self):
+        """Get the instrument listening again (serial ports only; see SerialTransport.wake)."""
+
     def flush_input(self):
         with self.lock:
             junk = self._read(4096, 0.02)
@@ -179,6 +182,22 @@ class SerialTransport(Transport):
             return self.ser.read(n)
         except (OSError, self.serial_mod.SerialException) as e:
             raise TransportError(f"serial port error: {e} (adapter unplugged?)") from e
+
+    def wake(self, settle=0.3):
+        """A Titrino that was already switched on when the port was opened may not answer: opening a USB-serial
+        adapter can put a glitch on the line, which the Titrino takes as the start of a command (the next
+        command then arrives garbled), and a Titrino left paused by XOFF does not send. So: let the lines settle,
+        send XON and an empty line (ends any half-received command), and discard what comes back."""
+        with self.lock:
+            time.sleep(settle)
+            LOG.add(self.name, "··", "wake: XON + empty line")
+            try:
+                self.ser.write(b"\x11" + protocol.TERM.encode("ascii"))
+                self.ser.flush()
+            except Exception:  # noqa: BLE001 - the request that follows reports real port errors
+                pass
+            time.sleep(0.2)
+            self.flush_input()
 
     def modem_lines(self):
         try:

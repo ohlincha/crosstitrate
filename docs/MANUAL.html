@@ -372,20 +372,28 @@ Over SSH or without the .deb:
 <code>sudo usermod -aG dialout $USER</code>, then log in again.</td>
 </tr>
 <tr class="odd">
+<td>Connects only if the Titrino is switched on <em>after</em>
+CrossTitrate opened the port</td>
+<td>Fixed in 0.4.3: CrossTitrate wakes a Titrino that was already on
+(XON + empty line, up to three tries). If it still happens, press
+<strong>Test connection</strong> with the Titrino on and send the
+diagnostics text to the developer.</td>
+</tr>
+<tr class="even">
 <td><strong>E42</strong> on the Titrino display</td>
 <td>Handshake problem. Set handshake to <em>none</em> on the Titrino, or
 keep <em>Raise RTS/DTR</em> ticked and use a fully wired cable.</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td>Garbled replies / E36–E37</td>
 <td>Baud, parity or data bits differ between Titrino and program. The
 diagnostics scan finds the right settings.</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td>Windows, Prolific adapter “code 10”</td>
 <td>Use an FTDI-based adapter.</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td>“Connect the measuring instrument first”</td>
 <td>Connect a Titrino and select it as <em>Measuring
 instrument</em>.</td>
