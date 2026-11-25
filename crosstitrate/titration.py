@@ -421,7 +421,7 @@ class TitrationJob:
 
     def meta(self):
         return {
-            "software": f"titrate {__version__}",
+            "software": f"CrossTitrate {__version__}",
             "start_time": datafile.iso(time.time()),
             "sample": dataclasses.asdict(self.sample),
             "method": self.m.to_dict(),
